@@ -87,6 +87,21 @@ class Trainer:
         # also load the training dataset images, this will be useful for GAN loss 
         real_dataset = LMDBDataset(args.real_image_path)
 
+        # -------------------------------------- TEMPORARY HACK FOR REPLICATING POKEMON DATASET ------------------------------------
+        from torch.utils.data import Dataset
+
+        class RepeatDataset(Dataset):
+            def __init__(self, base, length):
+                self.base, self.length = base, length
+            def __len__(self): return self.length
+            def __getitem__(self, i): return self.base[i % len(self.base)]
+
+        # Make length a multiple of (world_size * batch_size * steps_per_epoch)
+        effective_len = args.batch_size * accelerator.num_processes
+
+        real_dataset = RepeatDataset(real_dataset, effective_len)
+        # -------------------------------------- END OF TEMPORARY HACK ------------------------------------------------------------
+
         real_image_dataloader = torch.utils.data.DataLoader(
             real_dataset, batch_size=args.batch_size, shuffle=True, 
             drop_last=True, num_workers=args.num_workers
