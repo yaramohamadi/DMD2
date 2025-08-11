@@ -27,7 +27,7 @@ class Trainer:
 
         accelerator = Accelerator(
             gradient_accumulation_steps=1, # no accumulation
-            mixed_precision="no",
+            mixed_precision="bf16",
             log_with="wandb",
             project_config=accelerator_project_config,
             kwargs_handlers=None
@@ -65,8 +65,8 @@ class Trainer:
         if args.ckpt_only_path is not None:
             if accelerator.is_main_process:
                 print(f"loading checkpoints without optimizer states from {args.ckpt_only_path}")
-            # state_dict = torch.load(args.ckpt_only_path, map_location="cpu")
-            # print(self.model.load_state_dict(state_dict, strict=False))
+            state_dict = torch.load(args.ckpt_only_path, map_location="cpu")
+            print(self.model.load_state_dict(state_dict, strict=False))
             generator_path = os.path.join(args.ckpt_only_path, "pytorch_model.bin")
             guidance_path = os.path.join(args.ckpt_only_path, "pytorch_model_1.bin")
 

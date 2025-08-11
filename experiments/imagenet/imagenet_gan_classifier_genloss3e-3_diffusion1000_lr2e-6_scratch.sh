@@ -2,12 +2,12 @@ export CHECKPOINT_PATH=$1
 export WANDB_ENTITY=$2
 export WANDB_PROJECT=$3
 
-CUDA_VISIBLE_DEVICES=1,2,3,4,5,6,7 torchrun --nproc_per_node 7 --nnodes 1 main/edm/train_edm.py \
+CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node 2 --nnodes 1 main/edm/train_edm.py \
     --generator_lr 2e-6  \
     --guidance_lr 2e-6  \
     --train_iters 10000000 \
     --output_path $CHECKPOINT_PATH/imagenet_gan_classifier_genloss3e-3_diffusion1000_lr2e-6_scratch \
-    --batch_size 40 \
+    --batch_size 20 \
     --initialie_generator --log_iters 500 \
     --resolution 64 \
     --label_dim 1000 \

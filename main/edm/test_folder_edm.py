@@ -160,14 +160,14 @@ def evaluate():
     parser.add_argument("--wandb_entity", type=str)
     parser.add_argument("--wandb_project", type=str)
     parser.add_argument("--wandb_name", type=str)
-    parser.add_argument("--eval_batch_size", type=int, default=128)
+    parser.add_argument("--eval_batch_size", type=int, default=16)
     parser.add_argument("--resolution", type=int, default=32)
     parser.add_argument("--total_eval_samples", type=int, default=50000)
     parser.add_argument("--label_dim", type=int, default=10)
     parser.add_argument("--sigma_max", type=float, default=80.0)
     parser.add_argument("--sigma_min", type=float, default=0.002)
     parser.add_argument("--test_visual_batch_size", type=int, default=100)
-    parser.add_argument("--max_batch_size", type=int, default=128)
+    parser.add_argument("--max_batch_size", type=int, default=16)
     parser.add_argument("--ref_path", type=str, help="reference fid statistics")
     parser.add_argument("--detector_url", type=str)
     parser.add_argument("--seed", type=int, default=10)
@@ -185,7 +185,7 @@ def evaluate():
     accelerator_project_config = ProjectConfiguration(logging_dir=args.folder)
     accelerator = Accelerator(
         gradient_accumulation_steps=1,
-        mixed_precision="no",
+        mixed_precision="bf16",
         log_with="wandb",
         project_config=accelerator_project_config
     )
