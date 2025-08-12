@@ -56,6 +56,7 @@ class Trainer:
 
         self.gan_classifier = args.gan_classifier 
         self.gen_cls_loss_weight = args.gen_cls_loss_weight 
+        self.dmd_loss_weight = args.dmd_loss_weight # Added by me
         self.no_save = args.no_save
         self.previous_time = None 
         self.step = 0 
@@ -263,7 +264,7 @@ class Trainer:
         generator_loss = 0.0 
 
         if COMPUTE_GENERATOR_GRADIENT:
-            generator_loss += generator_loss_dict["loss_dm"]
+            generator_loss += self.dmd_loss_weight * generator_loss_dict["loss_dm"] # DMD loss weight added by me
 
             if self.gan_classifier:
                 generator_loss += generator_loss_dict["gen_cls_loss"] * self.gen_cls_loss_weight
@@ -508,6 +509,7 @@ def parse_args():
     parser.add_argument("--gen_cls_loss_weight", type=float, default=0)
     parser.add_argument("--diffusion_gan", action="store_true")
     parser.add_argument("--diffusion_gan_max_timestep", type=int, default=0)
+    parser.add_argument("--dmd_loss_weight", type=float, default=1, help="DMD loss weight, 0 means no DMD loss")
 
     parser.add_argument("--no_save", action="store_true")
     parser.add_argument("--cache_dir", type=str, default="")
