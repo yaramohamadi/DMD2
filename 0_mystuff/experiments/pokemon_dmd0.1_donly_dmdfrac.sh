@@ -9,7 +9,7 @@ CUDA_VISIBLE_DEVICES=2,3 torchrun --nproc_per_node 2 --nnodes 1 --master_addr "$
     --generator_lr 2e-6  \
     --guidance_lr 2e-6  \
     --train_iters 10000000 \
-    --output_path $CHECKPOINT_PATH/pokemon_dmd0.02 \
+    --output_path $CHECKPOINT_PATH/pokemon_dmd0.1_donly_dmdfrac \
     --batch_size 20 \
     --initialie_generator --log_iters 500 \
     --resolution 64 \
@@ -21,16 +21,20 @@ CUDA_VISIBLE_DEVICES=2,3 torchrun --nproc_per_node 2 --nnodes 1 --master_addr "$
     --wandb_entity $WANDB_ENTITY \
     --wandb_project $WANDB_PROJECT \
     --use_fp16 \
-    --wandb_name "pokemon_dmd0.02"   \
+    --wandb_name "pokemon_dmd0.1_donly_dmdfrac"   \
     --real_image_path $CHECKPOINT_PATH/pokemon_lmdb \
     --dfake_gen_update_ratio 5 \
     --cls_loss_weight 3e-2 \
     --gan_classifier \
     --gen_cls_loss_weight 2e-2 \
-    --dmd_loss_weight 0.02 \
+    --dmd_loss_weight 0.1 \
     --diffusion_gan \
     --diffusion_gan_max_timestep 1000 \
     --delete_ckpts \
+    --d_cls_head_only \
+    --dmd_keep_frac 0.35 \
     --max_checkpoint 500 
+# freeze backbone in D-step (d_cls_head_only) if requested
+# keep top 35% of sigmas for DMD (dmd_keep_frac=0.35 default is 1.0, i.e., no gate)
 
 # dmd loss weight is added by me    

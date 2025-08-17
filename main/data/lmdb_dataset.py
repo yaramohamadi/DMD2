@@ -6,22 +6,16 @@ import torch
 import lmdb 
 import glob 
 import os
-
-
+# add at top
+from typing import Optional, Callable
 
 class LMDBDataset(Dataset):
-    # LMDB version of an ImageDataset. It is suitable for large datasets.
-    def __init__(self, dataset_path):
-        # for supporting new datasets, please adapt the data type according to the one used in "main/data/create_imagenet_lmdb.py"
-        self.KEY_TO_TYPE = {
-            'labels': np.int64,
-            'images': np.uint8,
-        }
-
+    def __init__(self, dataset_path, transform: Optional[Callable] = None):
+        self.KEY_TO_TYPE = {'labels': np.int64, 'images': np.uint8}
         self.dataset_path = dataset_path
-        
-        self.env = lmdb.open(dataset_path, readonly=True, lock=False, readahead=False, meminit=False)
+        self.transform = transform  # <— NEW
 
+        self.env = lmdb.open(dataset_path, readonly=True, lock=False, readahead=False, meminit=False)
         self.image_shape = get_array_shape_from_lmdb(self.env, 'images')
         self.label_shape = get_array_shape_from_lmdb(self.env, 'labels')
 
@@ -29,25 +23,14 @@ class LMDBDataset(Dataset):
         return self.image_shape[0]
 
     def __getitem__(self, idx):
-        # final ground truth rgb image 
-        image = retrieve_row_from_lmdb(
-            self.env, 
-            "images", self.KEY_TO_TYPE['images'], self.image_shape[1:], idx
-        )
-        image = torch.tensor(image, dtype=torch.float32)
+        image = retrieve_row_from_lmdb(self.env, "images", self.KEY_TO_TYPE['images'], self.image_shape[1:], idx)
+        image = torch.tensor(image, dtype=torch.float32) / 255.0            # [C,H,W] in [0,1]
 
-        label =  retrieve_row_from_lmdb(
-            self.env, 
-            "labels", self.KEY_TO_TYPE['labels'], self.label_shape[1:], idx
-        )
-
+        label = retrieve_row_from_lmdb(self.env, "labels", self.KEY_TO_TYPE['labels'], self.label_shape[1:], idx)
         label = torch.tensor(label, dtype=torch.long)
-        image = (image / 255.0)
 
+        if self.transform is not None:
+            # transform should accept a tensor [C,H,W] in [0,1] and return same
+            image = self.transform(image)
 
-        output_dict = { 
-            'images': image,
-            'class_labels': label
-        }
-        
-        return output_dict
+        return {'images': image, 'class_labels': label}

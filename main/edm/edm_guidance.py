@@ -6,6 +6,23 @@ import pickle
 import torch
 import copy 
 
+# -------------------------------------------------------------------------------
+from contextlib import contextmanager # Added for freezing the discriminator head
+
+@contextmanager
+def freeze_params(module):
+    if module is None:
+        yield; return
+    prev = [p.requires_grad for p in module.parameters()]
+    try:
+        for p in module.parameters():
+            p.requires_grad = False
+        yield
+    finally:
+        for p, req in zip(module.parameters(), prev):
+            p.requires_grad = req
+# -------------------------------------------------------------------------------
+
 def get_sigmas_karras(n, sigma_min, sigma_max, rho=7.0):
     # from https://github.com/crowsonkb/k-diffusion
     ramp = torch.linspace(0, 1, n)
@@ -66,6 +83,16 @@ class EDMGuidance(nn.Module):
         )    
         self.register_buffer("karras_sigmas", karras_sigmas)
 
+        # DMD fraction parameters # I added this one
+        with torch.no_grad():
+            if getattr(args, "dmd_keep_frac", 1.0) < 1.0:
+                q = max(0.0, min(1.0, 1.0 - args.dmd_keep_frac))    # keep top frac => quantile at 1-frac
+                thr = torch.quantile(self.karras_sigmas.float(), q).to(self.karras_sigmas.dtype)
+            else:
+                thr = torch.tensor(0.0, dtype=self.karras_sigmas.dtype) # no gate
+        self.register_buffer("dmd_sigma_gate", thr)
+
+
         self.min_step = int(args.min_step_percent * self.num_train_timesteps)
         self.max_step = int(args.max_step_percent * self.num_train_timesteps)
         del temp_edm
@@ -107,6 +134,14 @@ class EDMGuidance(nn.Module):
                 
             grad = torch.nan_to_num(grad) 
 
+            # apply DMD gate # I added this one
+            gate = self.dmd_sigma_gate
+            if float(gate) > 0.0 or getattr(self.args, "dmd_keep_frac", 1.0) < 1.0:
+                mask = (timestep_sigma >= gate).float().view(-1, 1, 1, 1) # [B,1,1,1]
+                grad = grad * mask   # others -> zero grad (no DMD)
+            else:
+                mask = torch.ones_like(timestep_sigma).float().view(-1, 1, 1, 1) # [B,1,1,1]
+
         # this loss gives the grad as gradient through autodiff, following https://github.com/ashawkey/stable-dreamfusion 
         loss = 0.5 * F.mse_loss(original_latents, (original_latents-grad).detach(), reduction="mean")         
 
@@ -121,6 +156,10 @@ class EDMGuidance(nn.Module):
             "dmtrain_grad": grad.detach(),
             "dmtrain_gradient_norm": torch.norm(grad).item(),
             "dmtrain_timesteps": timesteps.detach(),
+            "dmtrain_mask": mask.squeeze(-1).squeeze(-1).squeeze(-1).detach(),  # [B]
+            "dmtrain_mask_frac": mask.mean().detach(),
+            "dmtrain_sigma": timestep_sigma.detach(),      # [B,1,1,1]
+            "dmtrain_sigma_gate": gate.clone().detach(),   # scalar
         }
         return loss_dict, dm_log_dict
 
@@ -171,7 +210,7 @@ class EDMGuidance(nn.Module):
         }
         return loss_dict, fake_log_dict
 
-    def compute_cls_logits(self, image, label):
+    def compute_cls_logits(self, image, label, freeze_backbone=False, freeze_head=False):
         if self.diffusion_gan:
             timesteps = torch.randint(
                 0, self.diffusion_gan_max_timestep, [image.shape[0]], device=image.device, dtype=torch.long
@@ -182,11 +221,11 @@ class EDMGuidance(nn.Module):
             timesteps = torch.zeros([image.shape[0]], dtype=torch.long, device=image.device)
             timestep_sigma = self.karras_sigmas[timesteps]
 
-        rep = self.fake_unet(
-            image, timestep_sigma, label, return_bottleneck=True
-        ).float() 
+        with freeze_params(self.fake_unet) if freeze_backbone else torch.enable_grad():
+            rep = self.fake_unet(image, timestep_sigma, label, return_bottleneck=True).float()
 
-        logits = self.cls_pred_branch(rep).squeeze(dim=[2, 3])
+        with freeze_params(self.cls_pred_branch) if freeze_head else torch.enable_grad():
+            logits = self.cls_pred_branch(rep).squeeze(2, 3)
         return logits
 
     def compute_generator_clean_cls_loss(self, fake_image, fake_labels):
@@ -194,17 +233,19 @@ class EDMGuidance(nn.Module):
 
         pred_realism_on_fake_with_grad = self.compute_cls_logits(
             image=fake_image, 
-            label=fake_labels
+            label=fake_labels,
+            freeze_backbone=True, freeze_head=True
         )
         loss_dict["gen_cls_loss"] = F.softplus(-pred_realism_on_fake_with_grad).mean()
         return loss_dict 
 
-    def compute_guidance_clean_cls_loss(self, real_image, fake_image, real_label, fake_label):
+    def compute_guidance_clean_cls_loss(self, real_image, fake_image, real_label, fake_label): # add option for discriminator feature extraction freezing and only train head
+        fb = self.args.d_cls_head_only  # freeze backbone in D-step if requested
         pred_realism_on_real = self.compute_cls_logits(
-            real_image.detach(), real_label, 
+            real_image.detach(), real_label, freeze_backbone=fb, freeze_head=False
         )
         pred_realism_on_fake = self.compute_cls_logits(
-            fake_image.detach(), fake_label, 
+            fake_image.detach(), fake_label, freeze_backbone=fb, freeze_head=False
         )
         classification_loss = F.softplus(pred_realism_on_fake) + F.softplus(-pred_realism_on_real)
 

@@ -10,8 +10,8 @@ export WANDB_PROJECT="DMD" # change this to your own wandb project
 export CUDA_VISIBLE_DEVICES=2,3
 
 python main/edm/test_folder_edm.py \
-    --folder $CHECKPOINT_PATH/pokemon_dmd0.02/time_1755209298_seed10 \
-    --wandb_name test_pokemon_dmd0.02 \
+    --folder $CHECKPOINT_PATH/pokemon_dmd0_donly/time_1755208827_seed10 \
+    --wandb_name test_pokemon_dmd0_donly \
     --wandb_entity $WANDB_ENTITY \
     --wandb_project $WANDB_PROJECT \
     --resolution 64 --label_dim 1000  \

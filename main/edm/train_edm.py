@@ -7,13 +7,15 @@ from diffusers.optimization import get_scheduler
 from main.data.lmdb_dataset import LMDBDataset
 from main.edm.edm_unified_model import EDMUniModel
 from accelerate.utils import set_seed
-from accelerate import Accelerator
+from accelerate import Accelerator, DistributedDataParallelKwargs
 import argparse 
 import shutil
 import wandb 
 import torch 
 import time 
 import os
+
+from torchvision import transforms as T
 
 class Trainer:
     def __init__(self, args):
@@ -25,12 +27,13 @@ class Trainer:
 
         accelerator_project_config = ProjectConfiguration(logging_dir=args.output_path)
 
+        ddp = DistributedDataParallelKwargs(find_unused_parameters=True) # add this for discriminator head only training
         accelerator = Accelerator(
             gradient_accumulation_steps=1, # no accumulation
             mixed_precision="bf16",
             log_with="wandb",
             project_config=accelerator_project_config,
-            kwargs_handlers=None
+            kwargs_handlers=[ddp],   # <— add this for discriminator head only training
         )
         set_seed(args.seed + accelerator.process_index)
 
@@ -86,7 +89,8 @@ class Trainer:
             print(self.model.feedforward_model.load_state_dict(torch.load(generator_path, map_location="cpu"), strict=True))
 
         # also load the training dataset images, this will be useful for GAN loss 
-        real_dataset = LMDBDataset(args.real_image_path)
+        hflip = T.RandomHorizontalFlip(p=0.5)  # add --hflip_p to argparse if not already
+        real_dataset = LMDBDataset(args.real_image_path, transform=hflip)
 
         # -------------------------------------- TEMPORARY HACK FOR REPLICATING POKEMON DATASET ------------------------------------
         from torch.utils.data import Dataset
@@ -298,6 +302,7 @@ class Trainer:
             guidance_loss += guidance_loss_dict["guidance_cls_loss"] * self.cls_loss_weight
 
         self.accelerator.backward(guidance_loss)
+
         guidance_grad_norm = accelerator.clip_grad_norm_(self.model.guidance_model.parameters(), self.max_grad_norm)
         self.optimizer_guidance.step()
         self.optimizer_guidance.zero_grad()
@@ -510,6 +515,8 @@ def parse_args():
     parser.add_argument("--diffusion_gan", action="store_true")
     parser.add_argument("--diffusion_gan_max_timestep", type=int, default=0)
     parser.add_argument("--dmd_loss_weight", type=float, default=1, help="DMD loss weight, 0 means no DMD loss")
+    parser.add_argument("--d_cls_head_only", action="store_true", help="if set, the discriminator backbone is frozen and only the head is trained") # I added this one
+    parser.add_argument("--dmd_keep_frac",type=float, default=1.0, help="Apply DMD only to the top fraction of sigmas (e.g., 0.35 keeps the highest 35%)") # I added this one
 
     parser.add_argument("--no_save", action="store_true")
     parser.add_argument("--cache_dir", type=str, default="")

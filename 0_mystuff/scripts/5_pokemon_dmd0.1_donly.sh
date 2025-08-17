@@ -7,13 +7,11 @@ export CHECKPOINT_PATH="0_mystuff/checkpoint_path" # change this to your own che
 export WANDB_ENTITY="yara-mohammadi-bahram-1-ecole-superieure-de-technologie" # change this to your own wandb entity
 export WANDB_PROJECT="DMD" # change this to your own wandb project
 
-export CUDA_VISIBLE_DEVICES=2,3
+# mkdir $CHECKPOINT_PATH
 
-python main/edm/test_folder_edm.py \
-    --folder $CHECKPOINT_PATH/pokemon_dmd0.02/time_1755209298_seed10 \
-    --wandb_name test_pokemon_dmd0.02 \
-    --wandb_entity $WANDB_ENTITY \
-    --wandb_project $WANDB_PROJECT \
-    --resolution 64 --label_dim 1000  \
-    --ref_path $CHECKPOINT_PATH/imagenet_fid_refs_edm.npz \
-    --detector_url $CHECKPOINT_PATH/inception-2015-12-05.pkl
+# bash scripts/download_imagenet.sh $CHECKPOINT_PATH
+
+# start a training with 7 gpu
+
+export CUDA_VISIBLE_DEVICES=2,3
+bash 0_mystuff/experiments/pokemon_dmd0.1_donly.sh  $CHECKPOINT_PATH $WANDB_ENTITY $WANDB_PROJECT

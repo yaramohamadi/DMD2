@@ -7,11 +7,11 @@ export CHECKPOINT_PATH="0_mystuff/checkpoint_path" # change this to your own che
 export WANDB_ENTITY="yara-mohammadi-bahram-1-ecole-superieure-de-technologie" # change this to your own wandb entity
 export WANDB_PROJECT="DMD" # change this to your own wandb project
 
-export CUDA_VISIBLE_DEVICES=2,3
+export CUDA_VISIBLE_DEVICES=0,1
 
 python main/edm/test_folder_edm.py \
-    --folder $CHECKPOINT_PATH/pokemon_dmd0.02/time_1755209298_seed10 \
-    --wandb_name test_pokemon_dmd0.02 \
+    --folder $CHECKPOINT_PATH/pokemon_dmd0.1_donly/time_1755300331_seed10 \
+    --wandb_name test_pokemon_dmd0.1_donly \
     --wandb_entity $WANDB_ENTITY \
     --wandb_project $WANDB_PROJECT \
     --resolution 64 --label_dim 1000  \
