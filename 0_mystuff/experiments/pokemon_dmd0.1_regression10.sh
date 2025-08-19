@@ -1,0 +1,55 @@
+export CHECKPOINT_PATH=$1
+export WANDB_ENTITY=$2
+export WANDB_PROJECT=$3
+
+export MASTER_ADDR=127.0.0.1
+export MASTER_PORT=$(shuf -i 20000-65000 -n 1)   # pick a random free port
+
+
+# Buil anchors for regression
+python 0_mystuff/scripts_util/make_anchor_pairs.py \
+  --real_image_path 0_mystuff/checkpoint_path/pokemon_lmdb \
+  --out_path 0_mystuff/checkpoint_path/pokemon_lmdb/pokemon_10_anchors.pt \
+  --label_dim 1000 --resolution 64 --conditioning_sigma 80.0 \
+  --anchors_per_image 10
+
+# start a training with regression on 10 anchors
+CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node 2 --nnodes 1 --master_addr "$MASTER_ADDR" --master_port "$MASTER_PORT" main/edm/train_edm.py \
+    --generator_lr 2e-6  \
+    --guidance_lr 2e-6  \
+    --train_iters 10000000 \
+    --output_path $CHECKPOINT_PATH/pokemon_dmd0.1_regression10 \
+    --batch_size 20 \
+    --initialie_generator --log_iters 500 \
+    --resolution 64 \
+    --label_dim 1000 \
+    --dataset_name "imagenet" \
+    --seed 10 \
+    --model_id $CHECKPOINT_PATH/edm-imagenet-64x64-cond-adm.pkl \
+    --wandb_iters 100 \
+    --wandb_entity $WANDB_ENTITY \
+    --wandb_project $WANDB_PROJECT \
+    --use_fp16 \
+    --wandb_name "pokemon_dmd0.1_regression10"   \
+    --real_image_path $CHECKPOINT_PATH/pokemon_lmdb \
+    --dfake_gen_update_ratio 5 \
+    --cls_loss_weight 3e-2 \
+    --gan_classifier \
+    --gen_cls_loss_weight 2e-2 \
+    --dmd_loss_weight 0.1 \
+    --diffusion_gan \
+    --diffusion_gan_max_timestep 1000 \
+    --delete_ckpts \
+    --max_checkpoint 500 \
+    \
+    --anchor_pairs_path $CHECKPOINT_PATH/pokemon_10_anchors.pt \
+    --anchor_prob 1.0 \
+    --anchor_radius 0 \
+    --lambda_regression 1.0
+
+# dmd loss weight is added by me    
+# Lasts 5 parameters are added by me for regression loss
+
+#    --anchor_prob 0.25 \
+#    --anchor_radius 16 \
+#    --lambda_regression 0.05

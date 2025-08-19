@@ -17,6 +17,8 @@ import os
 
 from torchvision import transforms as T
 
+from main.edm.utils_anchor import AnchorPairs  # imported for sampling anchor pairs (regression loss)
+
 class Trainer:
     def __init__(self, args):
 
@@ -113,6 +115,17 @@ class Trainer:
         )
         real_image_dataloader = accelerator.prepare(real_image_dataloader)
         self.real_image_dataloader = cycle(real_image_dataloader)
+
+        # regression loss
+        self.anchor_prob = args.anchor_prob
+        self.anchor_radius = args.anchor_radius
+        self.lambda_regression = args.lambda_regression
+
+        self.anchors = None
+        if args.anchor_pairs_path and self.anchor_prob > 0.0:
+            if accelerator.is_main_process:
+                print(f"[anchors] loading {args.anchor_pairs_path}")
+            self.anchors = AnchorPairs(args.anchor_pairs_path, device=accelerator.device)
             
         self.optimizer_guidance = torch.optim.AdamW(
             [param for param in self.model.guidance_model.parameters() if param.requires_grad], 
@@ -254,6 +267,26 @@ class Trainer:
 
         COMPUTE_GENERATOR_GRADIENT = self.step % self.dfake_gen_update_ratio == 0
 
+        # if we have anchors, sample them # regression loss
+        # --- Anchor sampling (per-sample Bernoulli gate) ---
+        if self.anchors is not None and self.anchor_prob > 0.0:
+            B = scaled_noise.shape[0]
+            mask = (torch.rand(B, device=self.accelerator.device) < self.anchor_prob)  # [B]
+            num = int(mask.sum().item())
+            if num > 0:
+                idx = self.anchors.sample_indices(num, balanced=True)   # [num]
+                z0, x_tgt, y_tgt = self.anchors.get(idx)                # [num,3,H,W], [num,3,H,W], [num,C]
+                z = z0 + self.anchor_radius * torch.randn_like(z0)
+                # swap in anchor latents + labels for these positions
+                scaled_noise[mask] = z
+                labels[mask] = y_tgt
+                # stash targets for reg loss later
+                reg_targets = (mask, x_tgt)
+            else:
+                reg_targets = None
+        else:
+            reg_targets = None
+        # ---------------------------------------------------
 
         # generate images and optionaly compute the generator gradient
         generator_loss_dict, generator_log_dict = self.model(
@@ -272,6 +305,30 @@ class Trainer:
 
             if self.gan_classifier:
                 generator_loss += generator_loss_dict["gen_cls_loss"] * self.gen_cls_loss_weight
+
+            # regression loss
+            # --- Anchor regression loss (only on masked positions) ---
+            if reg_targets is not None and self.lambda_regression > 0.0:
+                mask, x_tgt = reg_targets
+                if mask.any():
+                    # Use images produced by the generator call above (keeps graph alive)
+                    x_hat_full = generator_log_dict['generated_image']   # [B,3,H,W], requires_grad=True
+                    x_hat = x_hat_full[mask]
+                    # Robust regression
+                    # reg_l1 = torch.nn.functional.l1_loss(x_hat, x_tgt)
+                    reg_l2 = torch.nn.functional.mse_loss(x_hat, x_tgt)
+                    reg_loss = reg_l2 # reg_l1 + 0.1 * reg_l2
+                    generator_loss = generator_loss + self.lambda_regression * reg_loss
+
+                    if self.accelerator.is_main_process and self.step % self.wandb_iters == 0:
+                        wandb.log({
+                            #"loss/reg_l1": reg_l1.item(),
+                            "loss/reg_l2": reg_l2.item(),
+                            "loss/reg_total": reg_loss.item(),
+                            "anchor/used_frac_step": float(mask.float().mean().item())
+                        }, step=self.step)
+            # ----------------------------------------------------------
+
 
             self.accelerator.backward(generator_loss)
             generator_grad_norm = accelerator.clip_grad_norm_(self.model.feedforward_model.parameters(), self.max_grad_norm)
@@ -313,6 +370,11 @@ class Trainer:
         # combine the two dictionaries 
         loss_dict = {**generator_loss_dict, **guidance_loss_dict}
         log_dict = {**generator_log_dict, **guidance_log_dict}
+
+        # regression loss logging
+        if self.step % self.wandb_iters == 0 and reg_targets is not None and accelerator.is_main_process:
+            m = float(reg_targets[0].float().mean().item())
+            print(f"[reg] used_frac={m:.3f}")
 
         if self.step % self.wandb_iters == 0:
             log_dict['generated_image'] = accelerator.gather(log_dict['generated_image'])
@@ -515,8 +577,22 @@ def parse_args():
     parser.add_argument("--diffusion_gan", action="store_true")
     parser.add_argument("--diffusion_gan_max_timestep", type=int, default=0)
     parser.add_argument("--dmd_loss_weight", type=float, default=1, help="DMD loss weight, 0 means no DMD loss")
+    
+    # --------------------- my additions -----------------------
+    # Discriminator head only training
     parser.add_argument("--d_cls_head_only", action="store_true", help="if set, the discriminator backbone is frozen and only the head is trained") # I added this one
+    # DMD with fraction of sigmas
     parser.add_argument("--dmd_keep_frac",type=float, default=1.0, help="Apply DMD only to the top fraction of sigmas (e.g., 0.35 keeps the highest 35%)") # I added this one
+
+    parser.add_argument("--anchor_pairs_path", type=str, default=None,
+        help="Path to offline anchor pairs .pt (created by make_anchor_pairs.py).")
+    parser.add_argument("--anchor_prob", type=float, default=0.0,
+        help="Probability per sample to use an anchor (and add regression).")
+    parser.add_argument("--anchor_radius", type=float, default=0.2,
+        help="Stddev of Gaussian jitter around anchor latent.")
+    parser.add_argument("--lambda_regression", type=float, default=0.05,
+        help="Weight for anchor regression (LPIPS/L1).")
+    # ----------------------------------------------------------
 
     parser.add_argument("--no_save", action="store_true")
     parser.add_argument("--cache_dir", type=str, default="")
