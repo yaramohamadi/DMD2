@@ -18,12 +18,42 @@ import glob
 import json
 import time
 import os
+from pathlib import Path
 
 from main.dhariwal.dhariwal_network import get_edm_network  # this builds DhariwalUNetAdapter
 # NEW: baseline evaluators
 from argparse import Namespace
 from main.dhariwal.evaluation_util import Evaluator
 
+
+def is_checkpoint_ready(ckpt_dir: Path) -> bool:
+    # Preferred: the trainer will touch this file when atomic rename is done
+    if (ckpt_dir / ".READY").exists():
+        return True
+    # Backward-compatible fallback: wait until pytorch_model.bin stops changing size
+    binp = ckpt_dir / "pytorch_model.bin"
+    if not binp.exists():
+        return False
+    size1 = binp.stat().st_size
+    time.sleep(0.8)  # small settle delay
+    if not binp.exists():
+        return False
+    size2 = binp.stat().st_size
+    return size1 == size2 and size1 > 0
+
+def try_eval_lock(ckpt_dir: Path) -> bool:
+    lock = ckpt_dir / ".EVAL_LOCK"
+    try:
+        fd = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_RDWR)
+        os.close(fd)
+        return True
+    except FileExistsError:
+        return False
+
+def release_eval_lock(ckpt_dir: Path):
+    lock = ckpt_dir / ".EVAL_LOCK"
+    if lock.exists():
+        lock.unlink(missing_ok=True)
 
 def create_generator(checkpoint_path, base_model=None):
     if base_model is None:
@@ -187,84 +217,74 @@ def evaluate():
     generator = None
 
     while True:
-        new_checkpoints = sorted(glob.glob(os.path.join(folder, "*checkpoint_*")))
-        new_checkpoints = set(new_checkpoints) - evaluated_checkpoints
-        new_checkpoints = sorted(list(new_checkpoints))
-
-        if len(new_checkpoints) == 0:
-            # you purposely had a tight loop; keep it as-is, but a short sleep avoids busy-wait
+        # only directories named 'checkpoint_*'
+        new_ckpts = sorted(p for p in Path(folder).glob("checkpoint_*") if p.is_dir())
+        new_ckpts = [str(p) for p in new_ckpts if str(p) not in evaluated_checkpoints]
+        if not new_ckpts:
             time.sleep(3.0)
             continue
 
-        for checkpoint in new_checkpoints:
+        for checkpoint in new_ckpts:
+            ckpt_path = Path(checkpoint)
+            ckpt_name = ckpt_path.name  # e.g., 'checkpoint_model_008600'
+            parts = ckpt_name.split("_")
+            try:
+                model_index = int(parts[-1])
+            except Exception:
+                # skip weird names
+                evaluated_checkpoints.add(checkpoint)
+                continue
+
             if accelerator.is_main_process:
                 print(f"Evaluating {folder} {checkpoint}")
-            model_index = int(checkpoint.replace("/", "").split("_")[-1])
 
-            generator = create_generator(
-                os.path.join(checkpoint, "pytorch_model.bin"),
-                base_model=generator
-            )
-            generator = generator.to(accelerator.device)
+            # READY / stability gate
+            if not is_checkpoint_ready(ckpt_path):
+                # Don’t mark as evaluated; we’ll come back
+                continue
 
-            all_images_tensor = sample(
-                accelerator,
-                generator,
-                args,
-                model_index
-            )
+            # Try to acquire lock; if another evaluator has it, skip
+            if not try_eval_lock(ckpt_path):
+                continue
 
-            # --- NEW: Baseline-aligned metrics (FID + intra-LPIPS via Evaluator) ---
-            # Convert your images from uint8 NHWC [0,255] -> float32 NCHW [0,1]
-            # all_images_tensor: (N, H, W, C), uint8 in [0,255]
-            imgs_nchw_f01 = all_images_tensor.permute(0, 3, 1, 2).to(torch.float32) / 255.0  # (N,3,H,W) in [0,1]
+            try:
+                generator = create_generator(
+                    str(ckpt_path / "pytorch_model.bin"),
+                    base_model=generator
+                ).to(accelerator.device)
 
-            # Optionally save like their script (arr.npy), commented out by default
-            # np.save(os.path.join(folder, f"arr_{model_index}.npy"), imgs_nchw_f01.cpu().numpy())
+                all_images_tensor = sample(accelerator, generator, args, model_index)
 
-            # Build ref path exactly like their script expects: <fid_npz_root>/<category>.npz
-            ref_npz_path = os.path.join(args.fid_npz_root, f"{args.category}.npz")
-            if accelerator.is_main_process:
-                print(f"[Evaluator] Using FID reference: {ref_npz_path}")
+                imgs_nchw_f01 = all_images_tensor.permute(0, 3, 1, 2).to(torch.float32) / 255.0
 
-            # Create a tiny args namespace for Evaluator (it may look for fields on args)
-            eval_args = Namespace(**{
-                "device": str(accelerator.device),
-                "category": args.category,
-                "fewshotdataset" : args.fewshotdataset,   # path to few-shot dataset for intra-LPIPS eval
-                "normalization" : True,               # your images are in [0,1]
-            })
+                ref_npz_path = os.path.join(args.fid_npz_root, f"{args.category}.npz")
+                if accelerator.is_main_process:
+                    print(f"[Evaluator] Using FID reference: {ref_npz_path}")
 
-            # Only the main process should actually run the Evaluator to avoid duplicate work
-            # (Evaluator is not necessarily DDP-safe internally)
-            stats = {}
-            if accelerator.is_main_process:
-                evaluator = Evaluator(
-                    eval_args,
-                    imgs_nchw_f01,         # torch.Tensor, (N,3,H,W), float32 in [0,1]
-                    ref_npz_path,          # path to reference npz for this category
-                    args.lpips_cluster_size,
-                )
+                eval_args = Namespace(**{
+                    "device": str(accelerator.device),
+                    "category": args.category,
+                    "fewshotdataset": args.fewshotdataset,
+                    "normalization": True,
+                })
 
-                fid_score = evaluator.calc_fid()
-                intra_lpips = evaluator.calc_intra_lpips()
+                stats = {}
+                if accelerator.is_main_process:
+                    evaluator = Evaluator(eval_args, imgs_nchw_f01, ref_npz_path, args.lpips_cluster_size)
+                    fid_score = evaluator.calc_fid()
+                    intra_lpips = evaluator.calc_intra_lpips()
+                    stats["fid"] = float(fid_score)
+                    stats["intra_lpips"] = float(intra_lpips)
+                    print(f"checkpoint {checkpoint} FID {fid_score:.4f}, Intra-LPIPS {intra_lpips:.4f}")
+                    overall_stats[checkpoint] = stats
 
-                stats["fid"] = float(fid_score)
-                stats["intra_lpips"] = float(intra_lpips)
+                if accelerator.is_main_process:
+                    wandb.log(stats, step=model_index)
 
-                print(f"checkpoint {checkpoint} FID {fid_score:.4f}, Intra-LPIPS {intra_lpips:.4f}")
-                overall_stats[checkpoint] = stats
-
-            # Broadcast scalar metrics to all ranks so wandb.log is consistent if you prefer
-            # (simplest: have only main process log)
-            if accelerator.is_main_process:
-                wandb.log(stats, step=model_index)
-
-                
-
-            torch.cuda.empty_cache()
-
-        evaluated_checkpoints.update(new_checkpoints)
+                torch.cuda.empty_cache()
+                evaluated_checkpoints.add(checkpoint)
+            finally:
+                release_eval_lock(ckpt_path)
 
         if accelerator.is_main_process:
             with open(os.path.join(folder, "stats.json"), "w") as f:

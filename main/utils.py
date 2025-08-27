@@ -12,7 +12,10 @@ import torch
 import math
 import copy 
 import os 
-
+# imports for wandb utils (I added this)
+from pathlib import Path
+import json
+import shutil
 
 
 def prepare_images_for_saving(images_tensor, resolution, range_type="neg1pos1"):
@@ -381,3 +384,44 @@ def extract_text_embeddings(batch, accelerator, text_encoder_one, text_encoder_t
     pooled_prompt_embeds = pooled_prompt_embeds.view(len(text_input_ids_one), -1) 
 
     return prompt_embeds, pooled_prompt_embeds
+
+
+
+# ------------------ Personal utility functions (I added this) ------------------
+
+# I added this for random flip augmentation
+class RandomHorizontalFlipTensor:
+    def __init__(self, p: float = 0.5):
+        self.p = p
+
+    def __call__(self, x: torch.Tensor) -> torch.Tensor:
+        # x: [C,H,W]
+        if torch.rand(()) < self.p:
+            return torch.flip(x, dims=[2])  # flip width dimension
+        return x
+
+# Wandb helper functionss
+def _wandb_meta_path(run_dir: str) -> Path:
+    return Path(run_dir) / "wandb_run.json"
+
+# Helper function to retry rmtree
+def _safe_rmtree(path: Path, retries: int = 6, base_delay: float = 0.2):
+    """Retrying rmtree to tolerate transient FS races."""
+    import errno
+    for i in range(retries):
+        try:
+            shutil.rmtree(path)
+            return True
+        except OSError as e:
+            # ENOTEMPTY or other transient error → backoff
+            time.sleep(base_delay * (2 ** i))
+    return False
+
+def _is_locked_or_not_ready(ckpt_dir: Path) -> bool:
+    """Skip deletion if evaluator is using it or it isn't finalized yet."""
+    if (ckpt_dir / ".EVAL_LOCK").exists():
+        return True
+    if not (ckpt_dir / ".READY").exists():
+        return True
+    return False
+

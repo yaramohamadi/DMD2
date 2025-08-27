@@ -66,6 +66,10 @@ class DhariwalUNetAdapter(nn.Module):
             )
         )
         self.unet, self.diffusion = script_util.create_model_and_diffusion(**defaults)
+
+        self._feat_buf = {}
+        self._feat_hooks = {}
+
         if use_fp16:
             self.unet.convert_to_fp16()
 
@@ -84,6 +88,46 @@ class DhariwalUNetAdapter(nn.Module):
         self.model = self.unet
         # Ensure attribute exists; deleting & re-adding will be harmless.
         setattr(self.model, "map_augment", None)
+
+    # ---------- feature extraction hooks (for multi-head GAN) ---------- 
+    def _resolve_feature_layers(self, requested):
+        # Return an ordered dict of {name: module} we can hook.
+        layers = {}
+        # Prefer guided_diffusion-style names if present:
+        if hasattr(self.unet, 'input_blocks'):
+            for i, m in enumerate(self.unet.input_blocks):
+                layers[f'in{i}'] = m
+        if hasattr(self.unet, 'middle_block'):
+            layers['mid'] = self.unet.middle_block
+
+        if requested == 'all':
+            return layers
+        # requested like "in2,in4,mid"
+        selected = {}
+        for tok in [t.strip() for t in requested.split(',') if t.strip()]:
+            if tok in layers:
+                selected[tok] = layers[tok]
+            elif tok.isdigit() and f'in{tok}' in layers:
+                selected[f'in{tok}'] = layers[f'in{tok}']
+        return selected if selected else layers  # fallback to all if nothing matched
+
+    def extract_multi_scale_features(self, x_t, t, y, requested='all'):
+        # Install hooks
+        modules = self._resolve_feature_layers(requested)
+        self._feat_buf = {}
+        def _mk_hook(name):
+            def hook(_m, _inp, out):
+                self._feat_buf[name] = out
+            return hook
+        for name, mod in modules.items():
+            self._feat_hooks[name] = mod.register_forward_hook(_mk_hook(name))
+        # one forward to populate buffers
+        _ = self._eps_pred(x_t, t, y)
+        # remove hooks
+        for h in self._feat_hooks.values():
+            h.remove()
+        self._feat_hooks = {}
+        return self._feat_buf  # dict name->Tensor
 
     # ---------- weight loading ----------
     def load_state_dict_forgiving(self, state):

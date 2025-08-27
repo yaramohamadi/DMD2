@@ -6,6 +6,38 @@ import pickle
 import torch
 import copy 
 
+
+# utils
+def _avg_spatial(x):
+    return x.mean(dim=(2,3), keepdim=False) if x.ndim == 4 else x  # [B,1,H,W]→[B,1]
+
+def _gan_losses(logits_real, logits_fake, mode='hinge'):
+    # Flatten to [B, K] so BCE targets can match exactly (works for [B,1], [B,HW], etc.)
+    logits_fake = logits_fake.view(logits_fake.size(0), -1)
+    logits_real_flat = None if logits_real is None else logits_real.view(logits_real.size(0), -1)
+
+    if mode == 'hinge':
+        d_loss_real = 0.0 if logits_real_flat is None else torch.relu(1.0 - logits_real_flat).mean()
+        d_loss_fake = torch.relu(1.0 + logits_fake).mean()
+        d_loss = d_loss_real + d_loss_fake
+        g_loss = (-logits_fake).mean()
+        return d_loss, g_loss
+
+    # 'bce'
+    bce = nn.BCEWithLogitsLoss()
+    zeros_f = torch.zeros_like(logits_fake)
+    ones_f  = torch.ones_like(logits_fake)
+
+    if logits_real_flat is None:
+        d_loss = bce(logits_fake, zeros_f)
+    else:
+        ones_r = torch.ones_like(logits_real_flat)  # IMPORTANT: build targets from logits_real shape
+        d_loss = bce(logits_real_flat, ones_r) + bce(logits_fake, zeros_f)
+
+    g_loss = bce(logits_fake, ones_f)
+    return d_loss, g_loss
+
+
 def get_sigmas_karras(n, sigma_min, sigma_max, rho=7.0):
     # from https://github.com/crowsonkb/k-diffusion
     ramp = torch.linspace(0, 1, n)
@@ -13,12 +45,20 @@ def get_sigmas_karras(n, sigma_min, sigma_max, rho=7.0):
     max_inv_rho = sigma_max ** (1 / rho)
     sigmas = (max_inv_rho + ramp * (min_inv_rho - max_inv_rho)) ** rho
     return sigmas
+#------------------------------------------------------------
+
 
 class dhariwalGuidance(nn.Module):
     def __init__(self, args, accelerator):
         super().__init__()
         self.args = args 
         self.accelerator = accelerator 
+
+        # GAN multi-head options
+        self.gan_multihead = getattr(args, 'gan_multihead', False)
+        self.gan_head_type = getattr(args, 'gan_head_type', 'patch')
+        self.gan_head_layers = getattr(args, 'gan_head_layers', 'all')
+        self.gan_adv_loss = getattr(args, 'gan_adv_loss', 'hinge')
 
         # with dnnlib.util.open_url(args.model_id) as f:
         #    temp_edm = pickle.load(f)['ema']
@@ -45,17 +85,25 @@ class dhariwalGuidance(nn.Module):
         self.gan_classifier = args.gan_classifier
         self.diffusion_gan = args.diffusion_gan 
         self.diffusion_gan_max_timestep = args.diffusion_gan_max_timestep
-
+        
         # Figure out bottleneck channels dynamically (works for 256x256 ADM)
         with torch.no_grad():
             dummy_x = torch.zeros(1, 3, args.resolution, args.resolution, device=accelerator.device)
             dummy_sigma = torch.ones(1, device=accelerator.device) * self.sigma_min  # any valid sigma
             # unconditional => label None; conditional => pass a 1-hot of shape [1, label_dim]
             dummy_label = None if args.label_dim == 0 else torch.zeros(1, args.label_dim, device=accelerator.device)
-            feat = self.fake_unet(dummy_x, dummy_sigma, dummy_label, return_bottleneck=True)
+
+            if accelerator.mixed_precision == "bf16":
+                with torch.autocast("cuda", dtype=torch.bfloat16):
+                    feat = self.fake_unet(dummy_x, dummy_sigma, dummy_label, return_bottleneck=True)
+            else:
+                feat = self.fake_unet(dummy_x, dummy_sigma, dummy_label, return_bottleneck=True)
+
             bottleneck_c = feat.shape[1]
 
-        if self.gan_classifier:
+        # Initialize head for single-head GAN (Dhariwal & Nichol)
+        if self.gan_classifier and not self.gan_multihead:
+            # ----- ORIGINAL single bottleneck head (unchanged) -----
             self.cls_pred_branch = nn.Sequential(
                 nn.Conv2d(kernel_size=4, in_channels=bottleneck_c, out_channels=bottleneck_c, stride=2, padding=1),  # 8x8 -> 4x4
                 nn.GroupNorm(num_groups=32, num_channels=bottleneck_c),
@@ -67,6 +115,35 @@ class dhariwalGuidance(nn.Module):
                 nn.Conv2d(kernel_size=1, in_channels=bottleneck_c, out_channels=1, stride=1, padding=0),
             )
             self.cls_pred_branch.requires_grad_(True)
+
+        # Initialize heads for multi-head GAN (Sushko §3.2)
+        elif self.gan_classifier and self.gan_multihead:
+            # ----- MULTI-HEAD (shallow) path: 1x1 conv per tapped block -----
+            with torch.no_grad():
+                dummy_x = torch.zeros(1, 3, args.resolution, args.resolution, device=accelerator.device)
+                dummy_sigma = torch.ones(1, device=accelerator.device) * self.sigma_min
+                # Map EDM → DDPM state for UNet hook pass
+                cfac = 1.0 / torch.sqrt(1.0 + dummy_sigma.view(1,1,1,1)**2)
+                x_t = cfac * dummy_x
+                t0 = torch.zeros(1, dtype=torch.long, device=accelerator.device)  # any valid timestep
+                y0 = None if args.label_dim == 0 else torch.zeros(1, args.label_dim, device=accelerator.device)
+                feats = self.fake_unet.extract_multi_scale_features(x_t, t0, y0, self.gan_head_layers)
+
+            heads = nn.ModuleDict()
+            for name, feat in feats.items():
+                ch = feat.shape[1]
+                if self.gan_head_type == 'patch':
+                    # produce H×W logits (will be avg pooled later)
+                    heads[name] = nn.Conv2d(ch, 1, kernel_size=1, stride=1, padding=0)
+                else:  # 'global'
+                    # produce scalar logit per sample via GAP
+                    heads[name] = nn.Sequential(
+                        nn.Conv2d(ch, 1, kernel_size=1, stride=1, padding=0),
+                        nn.AdaptiveAvgPool2d(1),
+                    )
+            self.multi_heads = heads.to(accelerator.device)
+            self.multi_heads.requires_grad_(True)
+            # -------------------------------------------------------
 
         self.num_train_timesteps = args.num_train_timesteps  
         # small sigma first, large sigma later
@@ -201,34 +278,76 @@ class dhariwalGuidance(nn.Module):
         logits = self.cls_pred_branch(rep).squeeze(dim=[2, 3])
         return logits
 
-    def compute_generator_clean_cls_loss(self, fake_image, fake_labels):
-        loss_dict = {} 
+    # ---------- feature extraction hooks (for multi-head GAN) ----------
+    def _extract_head_features(self, image, label):
+        # optional diffusion noise for GAN
+        if self.diffusion_gan:
+            timesteps = torch.randint(0, self.diffusion_gan_max_timestep, [image.shape[0]],
+                                    device=image.device, dtype=torch.long)
+        else:
+            timesteps = torch.zeros([image.shape[0]], dtype=torch.long, device=image.device)
+        timestep_sigma = self.karras_sigmas[timesteps]
+        x = image + timestep_sigma.view(-1,1,1,1) * torch.randn_like(image)
 
-        pred_realism_on_fake_with_grad = self.compute_cls_logits(
-            image=fake_image, 
-            label=fake_labels
-        )
-        loss_dict["gen_cls_loss"] = F.softplus(-pred_realism_on_fake_with_grad).mean()
-        return loss_dict 
+        # EDM → DDPM mapping for UNet hooks
+        from main.dhariwal.dhariwal_network import _map_sigma_to_t, _onehot_to_class_index
+        cfac = 1.0 / torch.sqrt(1.0 + timestep_sigma.view(-1,1,1,1)**2)
+        x_t = cfac * x
+        t = _map_sigma_to_t(timestep_sigma, self.fake_unet.alphas_cumprod)
+        y = _onehot_to_class_index(label)
+        feats = self.fake_unet.extract_multi_scale_features(x_t, t, y, self.gan_head_layers)
+        return feats
+
+    def compute_generator_clean_cls_loss(self, fake_image, fake_labels):
+        # Multi-head shallow heads
+        if self.gan_classifier and self.gan_multihead and getattr(self, 'multi_heads', None) is not None:
+            feats = self._extract_head_features(fake_image, fake_labels)
+            logits_fake_list = []
+            for name, head in self.multi_heads.items():
+                out = head(feats[name])          # [B,1,H,W] (patch) or [B,1,1,1] (global)
+                out = _avg_spatial(out)          # [B,1]
+                logits_fake_list.append(out)
+            logits_fake = torch.stack(logits_fake_list, dim=0).mean(dim=0)  # [B,1], avg over heads
+            _d, g_loss = _gan_losses(None, logits_fake, mode=self.gan_adv_loss)
+            return {"gen_cls_loss": g_loss}
+        # Single-head (original)
+        pred_realism_on_fake_with_grad = self.compute_cls_logits(image=fake_image, label=fake_labels)
+        return {"gen_cls_loss": F.softplus(-pred_realism_on_fake_with_grad).mean()}
+
 
     def compute_guidance_clean_cls_loss(self, real_image, fake_image, real_label, fake_label):
-        pred_realism_on_real = self.compute_cls_logits(
-            real_image.detach(), real_label, 
-        )
-        pred_realism_on_fake = self.compute_cls_logits(
-            fake_image.detach(), fake_label, 
-        )
+        # Multi-head shallow heads
+        if self.gan_classifier and self.gan_multihead and getattr(self, 'multi_heads', None) is not None:
+            feats_real = self._extract_head_features(real_image.detach(), real_label)
+            feats_fake = self._extract_head_features(fake_image.detach(), fake_label)
+
+            logits_real_list, logits_fake_list = [], []
+            for name, head in self.multi_heads.items():
+                lr = _avg_spatial(head(feats_real[name]))  # [B,1]
+                lf = _avg_spatial(head(feats_fake[name]))  # [B,1]
+                logits_real_list.append(lr)
+                logits_fake_list.append(lf)
+
+            logits_real = torch.stack(logits_real_list, dim=0).mean(dim=0)  # [B,1]
+            logits_fake = torch.stack(logits_fake_list, dim=0).mean(dim=0)  # [B,1]
+
+            d_loss, _g_ = _gan_losses(logits_real, logits_fake, mode=self.gan_adv_loss)
+            log_dict = {
+                "pred_realism_on_real": torch.sigmoid(logits_real).squeeze(1).detach(),
+                "pred_realism_on_fake": torch.sigmoid(logits_fake).squeeze(1).detach(),
+            }
+            return {"guidance_cls_loss": d_loss}, log_dict
+
+        # Single-head (original)
+        pred_realism_on_real = self.compute_cls_logits(real_image.detach(), real_label)
+        pred_realism_on_fake = self.compute_cls_logits(fake_image.detach(), fake_label)
         classification_loss = F.softplus(pred_realism_on_fake) + F.softplus(-pred_realism_on_real)
-
         log_dict = {
-            "pred_realism_on_real": torch.sigmoid(pred_realism_on_real).squeeze(dim=1).detach(),
-            "pred_realism_on_fake": torch.sigmoid(pred_realism_on_fake).squeeze(dim=1).detach()
+            "pred_realism_on_real": torch.sigmoid(pred_realism_on_real).squeeze(1).detach(),
+            "pred_realism_on_fake": torch.sigmoid(pred_realism_on_fake).squeeze(1).detach()
         }
+        return {"guidance_cls_loss": classification_loss.mean()}, log_dict
 
-        loss_dict = {
-            "guidance_cls_loss": classification_loss.mean()
-        }
-        return loss_dict, log_dict 
 
     def generator_forward(
         self,

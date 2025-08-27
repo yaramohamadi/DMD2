@@ -1,7 +1,11 @@
 import matplotlib
 matplotlib.use('Agg')
 
-from main.utils import prepare_images_for_saving, draw_valued_array, cycle, draw_probability_histogram
+from main.utils import (
+    prepare_images_for_saving, draw_valued_array, cycle,
+    draw_probability_histogram, RandomHorizontalFlipTensor,
+    _is_locked_or_not_ready, _safe_rmtree,
+)
 from accelerate.utils import ProjectConfiguration
 from diffusers.optimization import get_scheduler
 from main.data.lmdb_dataset import LMDBDataset
@@ -15,7 +19,8 @@ import torch
 import time 
 import os
 import math
-
+from pathlib import Path
+import shutil
 
 class Trainer:
     def __init__(self, args):
@@ -29,7 +34,7 @@ class Trainer:
 
         accelerator = Accelerator(
             gradient_accumulation_steps=1, # no accumulation
-            mixed_precision="no" if args.use_fp16 else "no",
+            mixed_precision="bf16" if args.use_fp16 else "no",
             log_with="wandb",
             project_config=accelerator_project_config,
             kwargs_handlers=None
@@ -39,14 +44,29 @@ class Trainer:
 
         print(accelerator.state)
 
+        # Enable checkpoint resuming and saving in the same wandb run
         if accelerator.is_main_process:
-            output_path = os.path.join(args.output_path, f"time_{int(time.time())}_seed{args.seed}")
-            os.makedirs(output_path, exist_ok=False)
-            self.output_path = output_path
+            if args.checkpoint_path is not None:
+                # Resume into the SAME run folder (parent of the checkpoint directory)
+                resume_run_dir = os.path.dirname(args.checkpoint_path.rstrip("/"))
+                self.output_path = resume_run_dir
+                os.makedirs(self.output_path, exist_ok=True)
+            else:
+                # fresh run
+                self.run_id = int(time.time())
+                output_path = os.path.join(args.output_path, f"time_{self.run_id}_seed{args.seed}")
+                os.makedirs(output_path, exist_ok=False)
+                self.output_path = output_path
 
             if args.cache_dir != "":
-                self.cache_dir = os.path.join(args.cache_dir, f"time_{int(time.time())}_seed{args.seed}")
-                os.makedirs(self.cache_dir, exist_ok=False)
+                if args.checkpoint_path is not None:
+                    # mirror cache dir name to the resumed run_id/seed pattern if you use it
+                    parent = os.path.basename(os.path.dirname(self.output_path))  # e.g., time_1756313057_seed10
+                    self.cache_dir = os.path.join(args.cache_dir, parent)
+                else:
+                    self.cache_dir = os.path.join(args.cache_dir, f"time_{getattr(self, 'run_id', int(time.time()))}_seed{args.seed}")
+                os.makedirs(self.cache_dir, exist_ok=True)
+                
 
         self.model = dhariwalUniModel(args, accelerator)
         self.dataset_name = args.dataset_name
@@ -89,7 +109,8 @@ class Trainer:
             print(self.model.feedforward_model.load_state_dict(torch.load(generator_path, map_location="cpu"), strict=True))
 
         # also load the training dataset images, this will be useful for GAN loss 
-        real_dataset = LMDBDataset(args.real_image_path)
+        real_transform = RandomHorizontalFlipTensor(p=0.5)
+        real_dataset = LMDBDataset(args.real_image_path, transform=real_transform)
 
         real_image_dataloader = torch.utils.data.DataLoader(
             real_dataset, batch_size=1, shuffle=True, 
@@ -165,40 +186,85 @@ class Trainer:
         print("loading a previous checkpoints including optimizer and random seed")
         print(self.accelerator.load_state(checkpoint_path, strict=False))
         self.accelerator.print(f"Loaded checkpoint from {checkpoint_path}")
+        self.step += 1
 
     def save(self):
-        # training states 
-        output_path = os.path.join(self.output_path, f"checkpoint_model_{self.step:06d}")
-        print(f"start saving checkpoint to {output_path}")
+        """
+        Idempotent, evaluator-safe save:
+        - write to tmp dir
+        - if final already exists, skip (don’t overwrite)
+        - else rename tmp → final and touch .READY
+        - prune older READY & unlocked checkpoints
+        """
+        run_root = Path(self.output_path)
+        final_dir = run_root / f"checkpoint_model_{self.step:06d}"
+        tmp_dir   = run_root / f".checkpoint_model_{self.step:06d}.tmp"
 
-        self.accelerator.save_state(output_path) 
+        if self.accelerator.is_main_process:
+            print(f"start saving checkpoint to {final_dir}")
 
-        # remove previous checkpoints 
-        if self.delete_ckpts:
-            for folder in os.listdir(self.output_path):
-                if folder.startswith("checkpoint_model") and folder != f"checkpoint_model_{self.step:06d}":
-                    shutil.rmtree(os.path.join(self.output_path, folder))
+            # If this checkpoint already exists, assume it’s complete and skip.
+            # (Prevents ENOTEMPTY on os.replace, and avoids clobbering past checkpoints.)
+            if final_dir.exists():
+                # optional: only skip if it's finalized
+                if (final_dir / ".READY").exists() and (final_dir / "pytorch_model.bin").exists():
+                    print(f"[save] {final_dir} already exists (.READY). Skipping step {self.step}.")
+                else:
+                    print(f"[save] {final_dir} exists (likely from previous run). Skipping to be safe.")
+                # remove any stray tmp dir and return
+                if tmp_dir.exists():
+                    _safe_rmtree(tmp_dir)
+                return
 
-        if self.cache_checkpoints:
-            # copy checkpoints to cache 
-            # overwrite the cache
-            if os.path.exists(os.path.join(self.cache_dir, f"checkpoint_model_{self.step:06d}")):
-                shutil.rmtree(os.path.join(self.cache_dir, f"checkpoint_model_{self.step:06d}"))
+            # Fresh save path: create clean tmp dir
+            if tmp_dir.exists():
+                _safe_rmtree(tmp_dir)
+            tmp_dir.mkdir(parents=True, exist_ok=True)
 
-            shutil.copytree(
-                os.path.join(self.output_path, f"checkpoint_model_{self.step:06d}"),
-                os.path.join(self.cache_dir, f"checkpoint_model_{self.step:06d}")
-            )
+            # Write state into tmp
+            self.accelerator.save_state(str(tmp_dir))
 
-            checkpoints = sorted(
-                [folder for folder in os.listdir(self.cache_dir) if folder.startswith("checkpoint_model")]
-            )
+            # Try to move tmp → final; if a race created final, skip gracefully
+            try:
+                os.replace(str(tmp_dir), str(final_dir))
+            except OSError as e:
+                if final_dir.exists():
+                    print(f"[save] {final_dir} appeared during save; skipping this step. ({e})")
+                    _safe_rmtree(tmp_dir)
+                    return
+                raise
 
-            if len(checkpoints) > self.max_checkpoint:
-                for folder in checkpoints[:-self.max_checkpoint]:
-                    shutil.rmtree(os.path.join(self.cache_dir, folder))
-        
-        print("done saving")
+            # Mark as complete
+            (final_dir / ".READY").touch()
+
+            # Prune old checkpoints (READY & not being evaluated)
+            if self.delete_ckpts:
+                for folder in os.listdir(self.output_path):
+                    if folder.startswith("checkpoint_model") and folder != f"checkpoint_model_{self.step:06d}":
+                        d = run_root / folder
+                        # only delete finalized & unlocked ones
+                        if (d / ".READY").exists() and not (d / ".EVAL_LOCK").exists():
+                            _safe_rmtree(d)
+
+            # Mirror to cache AFTER READY
+            if self.cache_checkpoints:
+                cache_ckpt = Path(self.cache_dir) / f"checkpoint_model_{self.step:06d}"
+                if cache_ckpt.exists():
+                    _safe_rmtree(cache_ckpt)
+                shutil.copytree(str(final_dir), str(cache_ckpt), dirs_exist_ok=False)
+
+                checkpoints = sorted(
+                    p for p in Path(self.cache_dir).iterdir()
+                    if p.is_dir() and p.name.startswith("checkpoint_model")
+                )
+                if len(checkpoints) > self.max_checkpoint:
+                    for p in checkpoints[:-self.max_checkpoint]:
+                        _safe_rmtree(p)
+
+            print("done saving")
+
+        self.accelerator.wait_for_everyone()
+
 
     def train_one_step(self):
         self.model.train()
@@ -519,6 +585,15 @@ def parse_args():
 
     # ---------------------- my additions -----------------------
     parser.add_argument("--dmd_loss_weight", type=float, default=1, help="DMD loss weight, 0 means no DMD loss")
+
+    parser.add_argument('--gan_multihead', action='store_true',
+        help='Enable multi-scale discriminator heads (Sushko §3.2).')
+    parser.add_argument('--gan_head_type', default='patch', choices=['patch','global'],
+        help='patch = 1x1 conv → HxW map; global = 1x1 conv + GAP → scalar.')
+    parser.add_argument('--gan_head_layers', type=str, default='all',
+        help='Comma-separated layer names/indices to attach heads, or "all".')
+    parser.add_argument('--gan_adv_loss', default='hinge', choices=['hinge','bce'],
+        help='Adversarial loss form for each head.')
     # -----------------------------------------------------------
 
     args = parser.parse_args()
