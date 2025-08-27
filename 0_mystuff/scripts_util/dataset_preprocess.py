@@ -2,7 +2,7 @@ import json, glob, os
 from pathlib import Path
 from PIL import Image, ImageOps
 
-data_path="0_mystuff/datasets/pokemon"
+data_path="0_mystuff/datasets/sunglasses"
 clss="0"
 
 folder = Path(os.path.join(data_path,clss))

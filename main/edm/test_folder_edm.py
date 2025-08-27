@@ -63,67 +63,58 @@ def create_evaluator(detector_url):
 
 @torch.no_grad()
 def sample(accelerator, current_model, args, model_index):
-    timesteps = torch.ones(args.eval_batch_size, device=accelerator.device, dtype=torch.long)
+    # figure out the model's label width
+    m = getattr(current_model, "module", current_model)
+    Lm = getattr(m, "label_dim", 0)  # 0 => unconditional
+    dev = accelerator.device
+
+    # timesteps / conditioning sigma
+    t = torch.full((args.eval_batch_size,), args.conditioning_sigma, device=dev)
     current_model.eval()
-    all_images = [] 
+    all_images = []
     all_images_tensor = []
 
-    current_index = 0 
+    set_seed(args.seed + accelerator.process_index)
 
-    all_labels = torch.arange(0, args.total_eval_samples*2, 
-        device=accelerator.device, dtype=torch.long) % args.label_dim
-
-    set_seed(args.seed+accelerator.process_index)
+    # helper: constant label-0 for the MODEL (not args.label_dim)
+    def constant_label_zero(B):
+        if Lm == 0:
+            return None
+        y = torch.zeros(B, Lm, device=dev, dtype=torch.float32)
+        y[:, 0] = 1.0
+        return y
 
     while len(all_images_tensor) * args.eval_batch_size * accelerator.num_processes < args.total_eval_samples:
-        noise = torch.randn(args.eval_batch_size, 3, 
-            args.resolution, args.resolution, device=accelerator.device
-        ) 
+        noise = torch.randn(args.eval_batch_size, 3, args.resolution, args.resolution, device=dev)
+        y_const0 = constant_label_zero(args.eval_batch_size)
 
-        random_labels = all_labels[current_index:current_index+args.eval_batch_size]
-        one_hot_labels = torch.eye(args.label_dim, device=accelerator.device)[
-            random_labels
-        ]
+        # generate
+        imgs = current_model(noise * args.conditioning_sigma, t, y_const0)
+        # to uint8 NHWC for logging / FID path (matches your original)
+        imgs_u8 = ((imgs + 1.0) * 127.5).clamp(0, 255).to(torch.uint8).permute(0, 2, 3, 1).contiguous()
 
-        current_index += args.eval_batch_size
+        gathered = accelerator.gather(imgs_u8)
+        all_images.append(gathered.cpu().numpy())
+        all_images_tensor.append(gathered.cpu())
 
-        eval_images = current_model(noise * args.conditioning_sigma, timesteps * args.conditioning_sigma, one_hot_labels) 
-        eval_images = ((eval_images + 1.0) * 127.5).clamp(0, 255).to(torch.uint8).permute(0, 2, 3, 1)
-        eval_images = eval_images.contiguous() 
-
-        gathered_images = accelerator.gather(eval_images)
-
-        all_images.append(gathered_images.cpu().numpy())
-        all_images_tensor.append(gathered_images.cpu())
-
-    if accelerator.is_main_process:
-        print("all_images len ", len(torch.cat(all_images_tensor, dim=0)))
-
+    # concat & log
     all_images = np.concatenate(all_images, axis=0)[:args.total_eval_samples]
     all_images_tensor = torch.cat(all_images_tensor, dim=0)[:args.total_eval_samples]
 
     if accelerator.is_main_process:
-        # Uncomment if you need to save the images 
-        # np.savez(os.path.join(args.folder, f"eval_image_model_{model_index:06d}.npz"), all_images)
-        # raise 
-        grid_size = int(args.test_visual_batch_size**(1/2))
-        eval_images_grid = all_images[:grid_size*grid_size].reshape(grid_size, grid_size, args.resolution, args.resolution, 3)
-        eval_images_grid = np.swapaxes(eval_images_grid, 1, 2).reshape(grid_size*args.resolution, grid_size*args.resolution, 3)
-
-        data_dict = {
-            "generated_image_grid": wandb.Image(eval_images_grid)
-        }
-
-        data_dict['image_mean'] = all_images_tensor.float().mean().item()
-        data_dict['image_std'] = all_images_tensor.float().std().item()
-
-        wandb.log(
-            data_dict,
-            step=model_index
-        )
+        grid_size = int(args.test_visual_batch_size ** 0.5)
+        grid = all_images[:grid_size*grid_size].reshape(grid_size, grid_size, args.resolution, args.resolution, 3)
+        grid = np.swapaxes(grid, 1, 2).reshape(grid_size*args.resolution, grid_size*args.resolution, 3)
+        wandb.log({
+            "generated_image_grid": wandb.Image(grid),
+            "image_mean": all_images_tensor.float().mean().item(),
+            "image_std":  all_images_tensor.float().std().item(),
+            "eval/label_mode": "constant_zero",
+            "eval/model_label_dim": int(Lm),
+        }, step=model_index)
 
     accelerator.wait_for_everyone()
-    return all_images_tensor 
+    return all_images_tensor
 
 @torch.no_grad()
 def calculate_inception_stats(all_images_tensor, evaluator, accelerator, evaluator_kwargs, feature_dim, max_batch_size):

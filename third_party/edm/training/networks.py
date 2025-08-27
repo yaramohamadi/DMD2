@@ -634,6 +634,7 @@ class iDDPMPrecond(torch.nn.Module):
 # Improved preconditioning proposed in the paper "Elucidating the Design
 # Space of Diffusion-Based Generative Models" (EDM).
 
+
 @persistence.persistent_class
 class EDMPrecond(torch.nn.Module):
     def __init__(self,

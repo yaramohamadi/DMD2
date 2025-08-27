@@ -1,14 +1,14 @@
 # A single unified model that wraps both the generator and discriminator
-from main.edm.edm_guidance import EDMGuidance
+from main.dhariwal.dhariwal_guidance import dhariwalGuidance
 from torch import nn
 import torch 
 import copy
 
-class EDMUniModel(nn.Module):
+class dhariwalUniModel(nn.Module):
     def __init__(self, args, accelerator):
         super().__init__()
 
-        self.guidance_model = EDMGuidance(args, accelerator) 
+        self.guidance_model = dhariwalGuidance(args, accelerator) 
 
         self.guidance_min_step = self.guidance_model.min_step
         self.guidance_max_step = self.guidance_model.max_step
@@ -61,10 +61,11 @@ class EDMUniModel(nn.Module):
                 log_dict = {} 
 
             log_dict['generated_image'] = generated_image.detach() 
+            log_dict['generated_image_undetached'] = generated_image
 
             log_dict['guidance_data_dict'] = {
                 "image": generated_image.detach(),
-                "label": labels.detach(),
+                "label": labels.detach() if labels is not None else None,
                 "real_train_dict": real_train_dict
             }
 

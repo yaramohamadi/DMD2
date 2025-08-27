@@ -9,17 +9,39 @@ import numpy as np
 import textwrap 
 import pickle 
 import torch 
+import math
 import copy 
 import os 
 
-def prepare_images_for_saving(images_tensor, resolution, grid_size=4, range_type="neg1pos1"):
+
+
+def prepare_images_for_saving(images_tensor, resolution, range_type="neg1pos1"):
+    """
+    images_tensor: [B, C, H, W]
+    resolution: assumed H=W
+    range_type: "neg1pos1" if in [-1,1], "uint8" if already 0-255
+    """
+    B = images_tensor.shape[0]
+    # choose square-ish grid automatically
+    grid_h = int(math.floor(math.sqrt(B)))
+    grid_w = int(math.ceil(B / grid_h))
+
     if range_type != "uint8":
         images_tensor = (images_tensor * 0.5 + 0.5).clamp(0, 1) * 255
 
-    images = images_tensor[:grid_size*grid_size].permute(0, 2, 3, 1).detach().cpu().numpy().astype("uint8")
-    grid = images.reshape(grid_size, grid_size, resolution, resolution, 3)
-    grid = np.swapaxes(grid, 1, 2).reshape(grid_size*resolution, grid_size*resolution, 3)
+    # [B,H,W,C]
+    images = images_tensor.permute(0, 2, 3, 1).detach().cpu().numpy().astype("uint8")
+
+    # pad if not enough to fill full grid
+    needed = grid_h * grid_w
+    if B < needed:
+        pad = np.zeros((needed - B, resolution, resolution, 3), dtype="uint8")
+        images = np.concatenate([images, pad], axis=0)
+
+    grid = images.reshape(grid_h, grid_w, resolution, resolution, 3)
+    grid = np.swapaxes(grid, 1, 2).reshape(grid_h*resolution, grid_w*resolution, 3)
     return grid
+
 
 def prepare_debug_output(tensor, resolution):
     # N x T x 3 x H x W 
@@ -29,23 +51,45 @@ def prepare_debug_output(tensor, resolution):
     tensor = np.swapaxes(tensor, 1, 2).reshape(T*resolution, N*resolution, 3)
     return tensor 
 
-def draw_valued_array(data, output_dir, grid_size=4):
-    fig = plt.figure(figsize=(20,20))
+def draw_valued_array(data, output_dir, grid_size=None):
+    """
+    data: 1D or 2D numpy array / torch tensor
+    output_dir: directory to save the image
+    grid_size: if None, computed from len(data); else forced size (pads/truncates)
+    """
+    data = np.array(data).flatten()
+    N = len(data)
 
-    data = data[:grid_size*grid_size].reshape(grid_size, grid_size)
-    cax = plt.matshow(data, cmap='viridis')  # Change cmap to your desired color map
+    # choose grid size automatically if not provided
+    if grid_size is None:
+        rows = int(math.floor(math.sqrt(N)))
+        cols = int(math.ceil(N / rows))
+    else:
+        rows = cols = grid_size
+        needed = rows * cols
+        if N < needed:
+            pad = np.zeros(needed - N)
+            data = np.concatenate([data, pad])
+        elif N > needed:
+            data = data[:needed]
+
+    data = data.reshape(rows, cols)
+
+    fig = plt.figure(figsize=(rows, cols))
+    cax = plt.matshow(data, cmap='viridis')  # or any colormap
     plt.colorbar(cax)
 
-    for i in range(grid_size):
-        for j in range(grid_size):
+    for i in range(rows):
+        for j in range(cols):
             plt.text(j, i, f'{data[i, j]:.3f}', ha='center', va='center', color='black')
 
-    plt.savefig(os.path.join(output_dir, "cache.jpg"))
-    plt.close('all')
+    out_path = os.path.join(output_dir, "cache.jpg")
+    plt.savefig(out_path)
+    plt.close(fig)
 
-    # read the image 
-    image = imageio.imread(os.path.join(output_dir, "cache.jpg"))
+    image = imageio.imread(out_path)
     return image
+
 
 def draw_probability_histogram(data):
     fig = plt.figure(figsize=(5,5))
