@@ -206,38 +206,34 @@ class Trainer:
         self.accelerator.print(f"Loaded checkpoint from {checkpoint_path}")
 
     def save(self):
-        # training states 
         output_path = os.path.join(self.output_path, f"checkpoint_model_{self.step:06d}")
-        print(f"start saving checkpoint to {output_path}")
+        if self.accelerator.is_main_process:
+            print(f"start saving checkpoint to {output_path}")
 
-        self.accelerator.save_state(output_path) 
+        # IMPORTANT: call on ALL ranks. Accelerate will ensure only main writes.
+        self.accelerator.save_state(output_path)
 
-        # remove previous checkpoints 
-        if self.delete_ckpts:
-            for folder in os.listdir(self.output_path):
-                if folder.startswith("checkpoint_model") and folder != f"checkpoint_model_{self.step:06d}":
-                    shutil.rmtree(os.path.join(self.output_path, folder))
+        if self.accelerator.is_main_process:
+            # remove previous checkpoints if asked
+            if self.delete_ckpts:
+                for folder in os.listdir(self.output_path):
+                    if folder.startswith("checkpoint_model") and folder != f"checkpoint_model_{self.step:06d}":
+                        shutil.rmtree(os.path.join(self.output_path, folder), ignore_errors=True)
 
-        if self.cache_checkpoints:
-            # copy checkpoints to cache 
-            # overwrite the cache
-            if os.path.exists(os.path.join(self.cache_dir, f"checkpoint_model_{self.step:06d}")):
-                shutil.rmtree(os.path.join(self.cache_dir, f"checkpoint_model_{self.step:06d}"))
+            # optional cache mirroring
+            if self.cache_checkpoints:
+                dst = os.path.join(self.cache_dir, f"checkpoint_model_{self.step:06d}")
+                if os.path.exists(dst):
+                    shutil.rmtree(dst, ignore_errors=True)
+                shutil.copytree(output_path, dst)
 
-            shutil.copytree(
-                os.path.join(self.output_path, f"checkpoint_model_{self.step:06d}"),
-                os.path.join(self.cache_dir, f"checkpoint_model_{self.step:06d}")
-            )
+                checkpoints = sorted([f for f in os.listdir(self.cache_dir) if f.startswith("checkpoint_model")])
+                if len(checkpoints) > self.max_checkpoint:
+                    for f in checkpoints[:-self.max_checkpoint]:
+                        shutil.rmtree(os.path.join(self.cache_dir, f), ignore_errors=True)
 
-            checkpoints = sorted(
-                [folder for folder in os.listdir(self.cache_dir) if folder.startswith("checkpoint_model")]
-            )
+            print("done saving")
 
-            if len(checkpoints) > self.max_checkpoint:
-                for folder in checkpoints[:-self.max_checkpoint]:
-                    shutil.rmtree(os.path.join(self.cache_dir, folder))
-        
-        print("done saving")
 
     def train_one_step(self):
         self.model.train()
@@ -577,21 +573,22 @@ class Trainer:
         self.accelerator.wait_for_everyone()
 
     def train(self):
-        for index in range(self.step, self.train_iters):                
+        for index in range(self.step, self.train_iters):
             self.train_one_step()
 
-            if self.accelerator.is_main_process:
-                if (not self.no_save) and self.step % self.log_iters == 0:
-                    self.save()
+            if (not self.no_save) and self.step % self.log_iters == 0:
+                # everyone lines up, everyone calls save_state (write happens only on main)
+                self.accelerator.wait_for_everyone()
+                self.save()
+                self.accelerator.wait_for_everyone()
 
+            if self.accelerator.is_main_process:
                 current_time = time.time()
                 if self.previous_time is None:
                     self.previous_time = current_time
                 else:
-                    wandb.log({"per iteration time": current_time-self.previous_time}, step=self.step)
+                    wandb.log({"per iteration time": current_time - self.previous_time}, step=self.step)
                     self.previous_time = current_time
-
-            self.accelerator.wait_for_everyone()
             self.step += 1
 
 def parse_args():

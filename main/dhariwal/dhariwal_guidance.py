@@ -12,9 +12,17 @@ def _avg_spatial(x):
     return x.mean(dim=(2,3), keepdim=False) if x.ndim == 4 else x  # [B,1,H,W]→[B,1]
 
 def _gan_losses(logits_real, logits_fake, mode='hinge'):
-    # Flatten to [B, K] so BCE targets can match exactly (works for [B,1], [B,HW], etc.)
+    # Flatten so it works for [B,1], [B,HW], etc.
     logits_fake = logits_fake.view(logits_fake.size(0), -1)
     logits_real_flat = None if logits_real is None else logits_real.view(logits_real.size(0), -1)
+
+    if mode == 'wgan':
+        # Critic scores: higher for real than fake.
+        d_loss_real = 0.0 if logits_real_flat is None else -logits_real_flat.mean()
+        d_loss_fake = logits_fake.mean()
+        d_loss = d_loss_real + d_loss_fake
+        g_loss = -logits_fake.mean()  # generator tries to increase critic score
+        return d_loss, g_loss
 
     if mode == 'hinge':
         d_loss_real = 0.0 if logits_real_flat is None else torch.relu(1.0 - logits_real_flat).mean()
@@ -31,7 +39,7 @@ def _gan_losses(logits_real, logits_fake, mode='hinge'):
     if logits_real_flat is None:
         d_loss = bce(logits_fake, zeros_f)
     else:
-        ones_r = torch.ones_like(logits_real_flat)  # IMPORTANT: build targets from logits_real shape
+        ones_r = torch.ones_like(logits_real_flat)
         d_loss = bce(logits_real_flat, ones_r) + bce(logits_fake, zeros_f)
 
     g_loss = bce(logits_fake, ones_f)
@@ -59,6 +67,7 @@ class dhariwalGuidance(nn.Module):
         self.gan_head_type = getattr(args, 'gan_head_type', 'patch')
         self.gan_head_layers = getattr(args, 'gan_head_layers', 'all')
         self.gan_adv_loss = getattr(args, 'gan_adv_loss', 'hinge')
+        self.wgan_gp_lambda = getattr(args, 'wgan_gp_lambda', 10.0)  # set >0 to enable GP (e.g., 10.0)
 
         # with dnnlib.util.open_url(args.model_id) as f:
         #    temp_edm = pickle.load(f)['ema']
@@ -159,6 +168,7 @@ class dhariwalGuidance(nn.Module):
         self.max_step = int(args.max_step_percent * self.num_train_timesteps)
         # del temp_edm
 
+    
     def compute_distribution_matching_loss(
         self, 
         latents,
@@ -298,55 +308,91 @@ class dhariwalGuidance(nn.Module):
         feats = self.fake_unet.extract_multi_scale_features(x_t, t, y, self.gan_head_layers)
         return feats
 
-    def compute_generator_clean_cls_loss(self, fake_image, fake_labels):
-        # Multi-head shallow heads
+    
+    def _critic_score(self, image, label):
+        """Unified scalar critic score per sample, works for single-head and multi-head."""
         if self.gan_classifier and self.gan_multihead and getattr(self, 'multi_heads', None) is not None:
-            feats = self._extract_head_features(fake_image, fake_labels)
-            logits_fake_list = []
+            feats = self._extract_head_features(image, label)
+            outs = []
             for name, head in self.multi_heads.items():
-                out = head(feats[name])          # [B,1,H,W] (patch) or [B,1,1,1] (global)
-                out = _avg_spatial(out)          # [B,1]
-                logits_fake_list.append(out)
-            logits_fake = torch.stack(logits_fake_list, dim=0).mean(dim=0)  # [B,1], avg over heads
-            _d, g_loss = _gan_losses(None, logits_fake, mode=self.gan_adv_loss)
+                out = head(feats[name])      # [B,1,H,W] or [B,1,1,1]
+                out = _avg_spatial(out)      # [B,1]
+                outs.append(out)
+            score = torch.stack(outs, dim=0).mean(dim=0)  # [B,1]
+            return score.view(score.size(0))              # [B]
+        else:
+            score = self.compute_cls_logits(image, label)  # [B,1]
+            return score.view(score.size(0))               # [B]
+
+
+    def _wgan_gradient_penalty(self, real_img, fake_img, label):
+        """WGAN-GP (Gulrajani et al.) on interpolates between real and fake."""
+        if self.wgan_gp_lambda <= 0.0:
+            return torch.tensor(0.0, device=real_img.device, dtype=real_img.dtype)
+
+        batch_size = real_img.size(0)
+        eps = torch.rand(batch_size, 1, 1, 1, device=real_img.device, dtype=real_img.dtype)
+        interp = eps * real_img + (1 - eps) * fake_img
+        interp.requires_grad_(True)
+
+        # critic score per sample
+        scores = self._critic_score(interp, label)  # [B]
+        grad_outputs = torch.ones_like(scores)
+
+        grads = torch.autograd.grad(
+            outputs=scores, inputs=interp,
+            grad_outputs=grad_outputs,
+            create_graph=True, retain_graph=True, only_inputs=True
+        )[0]  # [B, C, H, W]
+        grads = grads.view(grads.size(0), -1)
+        gp = ((grads.norm(2, dim=1) - 1.0) ** 2).mean() * self.wgan_gp_lambda
+        return gp
+
+
+    def compute_generator_clean_cls_loss(self, fake_image, fake_labels):
+        # Get unified critic score for fake
+        scores_fake = self._critic_score(fake_image, fake_labels)  # [B]
+
+        if self.gan_adv_loss == 'wgan':
+            g_loss = (-scores_fake).mean()
             return {"gen_cls_loss": g_loss}
-        # Single-head (original)
-        pred_realism_on_fake_with_grad = self.compute_cls_logits(image=fake_image, label=fake_labels)
-        return {"gen_cls_loss": F.softplus(-pred_realism_on_fake_with_grad).mean()}
+
+        if self.gan_adv_loss == 'hinge':
+            g_loss = (-scores_fake).mean()
+            return {"gen_cls_loss": g_loss}
+
+        # 'bce'
+        g_loss = F.binary_cross_entropy_with_logits(
+            scores_fake.view(-1, 1), torch.ones_like(scores_fake.view(-1, 1))
+        )
+        return {"gen_cls_loss": g_loss}
 
 
     def compute_guidance_clean_cls_loss(self, real_image, fake_image, real_label, fake_label):
-        # Multi-head shallow heads
-        if self.gan_classifier and self.gan_multihead and getattr(self, 'multi_heads', None) is not None:
-            feats_real = self._extract_head_features(real_image.detach(), real_label)
-            feats_fake = self._extract_head_features(fake_image.detach(), fake_label)
+        # Get unified critic scores
+        scores_real = self._critic_score(real_image.detach(), real_label)  # [B]
+        scores_fake = self._critic_score(fake_image.detach(), fake_label)  # [B]
 
-            logits_real_list, logits_fake_list = [], []
-            for name, head in self.multi_heads.items():
-                lr = _avg_spatial(head(feats_real[name]))  # [B,1]
-                lf = _avg_spatial(head(feats_fake[name]))  # [B,1]
-                logits_real_list.append(lr)
-                logits_fake_list.append(lf)
-
-            logits_real = torch.stack(logits_real_list, dim=0).mean(dim=0)  # [B,1]
-            logits_fake = torch.stack(logits_fake_list, dim=0).mean(dim=0)  # [B,1]
-
-            d_loss, _g_ = _gan_losses(logits_real, logits_fake, mode=self.gan_adv_loss)
+        if self.gan_adv_loss == 'wgan':
+            d_loss = (scores_fake - scores_real).mean()
+            gp = self._wgan_gradient_penalty(real_image.detach(), fake_image.detach(), real_label)
+            d_loss = d_loss + gp
             log_dict = {
-                "pred_realism_on_real": torch.sigmoid(logits_real).squeeze(1).detach(),
-                "pred_realism_on_fake": torch.sigmoid(logits_fake).squeeze(1).detach(),
+                "critic_real": scores_real.detach(),
+                "critic_fake": scores_fake.detach(),
+                "wgan_gp": torch.as_tensor(gp).detach()
             }
             return {"guidance_cls_loss": d_loss}, log_dict
 
-        # Single-head (original)
-        pred_realism_on_real = self.compute_cls_logits(real_image.detach(), real_label)
-        pred_realism_on_fake = self.compute_cls_logits(fake_image.detach(), fake_label)
-        classification_loss = F.softplus(pred_realism_on_fake) + F.softplus(-pred_realism_on_real)
+        # hinge / bce use the generic helper on raw scores
+        d_loss, _ = _gan_losses(scores_real.view(-1, 1), scores_fake.view(-1, 1), mode=self.gan_adv_loss)
         log_dict = {
-            "pred_realism_on_real": torch.sigmoid(pred_realism_on_real).squeeze(1).detach(),
-            "pred_realism_on_fake": torch.sigmoid(pred_realism_on_fake).squeeze(1).detach()
+            # for monitoring, you can keep sigmoid’d versions if you like
+            "pred_realism_on_real": torch.sigmoid(scores_real.view(-1, 1)).squeeze(1).detach(),
+            "pred_realism_on_fake": torch.sigmoid(scores_fake.view(-1, 1)).squeeze(1).detach(),
         }
-        return {"guidance_cls_loss": classification_loss.mean()}, log_dict
+        return {"guidance_cls_loss": d_loss}, log_dict
+
 
 
     def generator_forward(

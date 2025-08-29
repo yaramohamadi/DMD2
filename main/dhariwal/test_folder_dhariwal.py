@@ -176,7 +176,7 @@ def evaluate():
     parser.add_argument("--seed", type=int, default=10)
     parser.add_argument("--dataset_name", type=str, default="ffhq256")       # CHANGED: ffhq256
     parser.add_argument("--no_resume", action="store_true")
-    parser.add_argument("--conditioning_sigma", type=float, default=50.0)    # CHANGED: 50.0 is a good start at 256px
+    parser.add_argument("--conditioning_sigma", type=float, default=80.0)    
     parser.add_argument("--category", type=str, default="ffhq", help="Category name used to pick FID reference npz")
     parser.add_argument("--fid_npz_root", type=str, required=True, help="Directory that contains category npz files (e.g., .../fid_npz/ffhq.npz)")
     parser.add_argument("--lpips_cluster_size", type=int, default=100, help="Cluster size for intra-LPIPS")
@@ -185,7 +185,6 @@ def evaluate():
     args = parser.parse_args()
 
     folder = args.folder
-    evaluated_checkpoints = set()
     overall_stats = {}
 
     # accelerator init (same)
