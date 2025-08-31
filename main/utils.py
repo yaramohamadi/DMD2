@@ -54,27 +54,40 @@ def prepare_debug_output(tensor, resolution):
     tensor = np.swapaxes(tensor, 1, 2).reshape(T*resolution, N*resolution, 3)
     return tensor 
 
+    
 def draw_valued_array(data, output_dir, grid_size=None):
     """
     data: 1D or 2D numpy array / torch tensor
     output_dir: directory to save the image
     grid_size: if None, computed from len(data); else forced size (pads/truncates)
     """
-    data = np.array(data).flatten()
-    N = len(data)
+    # robustly handle torch tensors (including CUDA)
+    try:
+        import torch
+        if isinstance(data, torch.Tensor):
+            data = data.detach().cpu().numpy()
+    except Exception:
+        pass
+
+    data = np.asarray(data, dtype=np.float32).flatten()
+    N = int(data.size)
+    if N == 0:
+        data = np.zeros(1, dtype=np.float32)
+        N = 1
 
     # choose grid size automatically if not provided
     if grid_size is None:
-        rows = int(math.floor(math.sqrt(N)))
+        rows = int(math.floor(math.sqrt(N))) or 1
         cols = int(math.ceil(N / rows))
     else:
-        rows = cols = grid_size
-        needed = rows * cols
-        if N < needed:
-            pad = np.zeros(needed - N)
-            data = np.concatenate([data, pad])
-        elif N > needed:
-            data = data[:needed]
+        rows = cols = int(grid_size)
+
+    needed = rows * cols
+    if needed > N:
+        pad = np.zeros(needed - N, dtype=data.dtype)
+        data = np.concatenate([data, pad], axis=0)
+    elif needed < N:
+        data = data[:needed]
 
     data = data.reshape(rows, cols)
 
@@ -92,6 +105,7 @@ def draw_valued_array(data, output_dir, grid_size=None):
 
     image = imageio.imread(out_path)
     return image
+
 
 
 def draw_probability_histogram(data):

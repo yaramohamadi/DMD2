@@ -21,6 +21,7 @@ import os
 import math
 from pathlib import Path
 import shutil
+from collections import defaultdict
 
 class Trainer:
     def __init__(self, args):
@@ -182,6 +183,60 @@ class Trainer:
             self.wandb_folder = run.dir
             os.makedirs(self.wandb_folder, exist_ok=True)
 
+        self._mb_clear()
+
+    # Grad accumulation wandb
+    # ---- micro-batch accumulator (per grad-accum window) ----
+    def _mb_clear(self):
+        self._mb_tensors = defaultdict(list)  # per-key list of tensors
+        self._mb_scalars = defaultdict(float) # sums for scalars we want to average
+        self._mb_count   = 0                  # how many micro-batches in the window
+
+    def _mb_put(self, log_dict, loss_dict):
+        # Tensors we want to aggregate across micro-batches (extend as needed)
+        tkeys = [
+            'generated_image',
+            'dmtrain_noisy_latents',
+            'dmtrain_pred_real_image',
+            'dmtrain_pred_fake_image',
+            'dmtrain_grad',
+            'dmtrain_timesteps',
+            'faketrain_latents',
+            'faketrain_noisy_latents',
+            'faketrain_x0_pred',
+        ]
+        for k in tkeys:
+            v = log_dict.get(k, None)
+            if isinstance(v, torch.Tensor):
+                # keep on device; cheaper to gather once at the end
+                self._mb_tensors[k].append(v.detach())
+
+        # Scalars we want to average over the window (extend as needed)
+        for k in ['loss_dm', 'loss_fake_mean', 'guidance_cls_loss', 'gen_cls_loss']:
+            if k in loss_dict:
+                v = loss_dict[k]
+                self._mb_scalars[k] += (float(v.detach().item()) if torch.is_tensor(v) else float(v))
+
+        self._mb_count += 1
+
+    def _mb_concat_and_gather(self):
+        """Concatenate micro-batches and gather across processes for logging/metrics."""
+        cat = {}
+        for k, lst in self._mb_tensors.items():
+            if len(lst) > 0:
+                cat[k] = torch.cat(lst, dim=0)                    # [sum_B, ...] across micro-batches
+                cat[k] = self.accelerator.gather_for_metrics(cat[k])  # gather across processes (-> CPU)
+            else:
+                cat[k] = None
+
+        means = {}
+        denom = max(1, self._mb_count)
+        for k, s in self._mb_scalars.items():
+            means[k] = s / denom
+
+        return cat, means
+
+
     def load(self, checkpoint_path):
         # Expecting directories like .../checkpoint_model_000123
         self.global_step = int(checkpoint_path.rstrip("/").split("_")[-1])
@@ -252,41 +307,34 @@ class Trainer:
 
         self.model.train()
         accelerator = self.accelerator
-        # For handling larger batch size than GPU memory
         accum = self.accelerator.gradient_accumulation_steps
         self.global_step = self.step // max(1, accum)   # optimizer-step index
-        
-        # Retrieve a batch of real images from the dataloader.
+
+        # New accumulation window? Clear buffers.
+        if (self.step % max(1, accum)) == 0:
+            self._mb_clear()
+
+        # ----- your batch prep (unchanged) -----
         real_dict = next(self.real_image_dataloader)
-        # Extract the images from the dictionary and normalize them.
-        real_image = real_dict["images"] * 2.0 - 1.0 
+        real_image = real_dict["images"] * 2.0 - 1.0
         if self.label_dim > 0:
             real_label = self.eye_matrix[real_dict["class_labels"].squeeze(dim=1)]
         else:
-            # Unconditional: ignore dataset labels
             real_label = None
-        real_train_dict = {
-            "real_image": real_image,
-            "real_label": real_label
-        }
+        real_train_dict = {"real_image": real_image, "real_label": real_label}
 
-        # Generate scaled noise based on the maximum sigma value.
         scaled_noise = torch.randn(
-            self.batch_size, 3, self.resolution, self.resolution, 
-            device=accelerator.device
+            self.batch_size, 3, self.resolution, self.resolution, device=accelerator.device
         ) * self.conditioning_sigma
-        # Set timestep sigma to a preset value for all images in the batch.
         timestep_sigma = torch.ones(self.batch_size, device=accelerator.device) * self.conditioning_sigma
-        # For unconditional generation (our case), labels are set to None.
         if self.label_dim > 0:
-            labels = torch.randint( low=0, high=self.label_dim, size=(self.batch_size,), device=accelerator.device, dtype=torch.long)
+            labels = torch.randint(0, self.label_dim, (self.batch_size,), device=accelerator.device, dtype=torch.long)
             labels = self.eye_matrix[labels]
         else:
             labels = None
 
         COMPUTE_GENERATOR_GRADIENT = self.global_step % self.dfake_gen_update_ratio == 0
-
-        generator_grad_norm = torch.tensor(0.0, device=accelerator.device)  # default for logging
+        generator_grad_norm = torch.tensor(0.0, device=accelerator.device)
 
         # =========================
         #  Generator micro-step(s)
@@ -306,7 +354,6 @@ class Trainer:
 
                 accelerator.backward(generator_loss)
 
-                # Only clip/step/zero on the LAST micro-step
                 if accelerator.sync_gradients:
                     if accelerator.mixed_precision == "fp16":
                         generator_grad_norm = accelerator.clip_grad_norm_(self.model.feedforward_model.parameters(),
@@ -316,14 +363,12 @@ class Trainer:
                                                                             self.max_grad_norm)
                     self.optimizer_generator.step()
                     self.optimizer_generator.zero_grad()
-                    # scheduler steps once per optimizer step
                     self.scheduler_generator.step()
             else:
-                # No generator update this optimizer step; still advance scheduler only on sync to keep semantics consistent.
                 if accelerator.sync_gradients:
                     self.scheduler_generator.step()
 
-         # =========================
+        # =========================
         #  Guidance micro-step(s)
         # =========================
         with accelerator.accumulate(self.model.guidance_model):
@@ -354,183 +399,149 @@ class Trainer:
         loss_dict = {**gen_loss_dict, **guid_loss_dict}
         log_dict  = {**gen_log_dict,  **guid_log_dict}
 
+        # Feed THIS micro-batch into the accumulation buffers
+        self._mb_put(log_dict, loss_dict)
+
         # ===== Logging once per optimizer step =====
-        if accelerator.sync_gradients:
-            # keep your NaN checks as-is
-            for k in ["generated_image", "dmtrain_pred_real_image", "dmtrain_pred_fake_image", "dmtrain_noisy_latents"]:
-                if k in log_dict and torch.isnan(log_dict[k]).any():
-                    print(f"[warn] NaN detected in {k} at step {self.step}")
+        if accelerator.sync_gradients and (self.global_step % self.wandb_iters == 0):
+            # IMPORTANT: do aggregation/gather on ALL ranks to avoid deadlock
+            batched, scalar_means = self._mb_concat_and_gather()
 
-            if self.global_step % self.wandb_iters == 0:
-                log_dict['generated_image'] = accelerator.gather(log_dict['generated_image'])
-                log_dict['dmtrain_grad'] = accelerator.gather(log_dict['dmtrain_grad'])
-                log_dict['dmtrain_timesteps'] = accelerator.gather(log_dict['dmtrain_timesteps'])
-                log_dict['dmtrain_pred_real_image'] = accelerator.gather(log_dict['dmtrain_pred_real_image'])
-                log_dict['dmtrain_pred_fake_image'] = accelerator.gather(log_dict['dmtrain_pred_fake_image'])
-
-            if accelerator.is_main_process and self.global_step % self.wandb_iters == 0:
-                # TODO: Need more refactoring here 
+            if accelerator.is_main_process:
                 with torch.no_grad():
-                    generated_image = log_dict['generated_image']
-                    generated_image_brightness = (generated_image*0.5+0.5).clamp(0, 1).mean() 
-                    generated_image_std =  (generated_image*0.5+0.5).clamp(0, 1).std()
+                    def agg_or_last(key):
+                        v = batched.get(key, None)
+                        return v if v is not None else log_dict[key]
 
-                    generated_image_grid = prepare_images_for_saving(generated_image, resolution=self.resolution)
+                    generated_image            = agg_or_last('generated_image')
+                    dmtrain_noisy_latents      = agg_or_last('dmtrain_noisy_latents')
+                    dmtrain_pred_real_image    = agg_or_last('dmtrain_pred_real_image')
+                    dmtrain_pred_fake_image    = agg_or_last('dmtrain_pred_fake_image')
+                    dmtrain_grad               = agg_or_last('dmtrain_grad')
+                    dmtrain_timesteps          = agg_or_last('dmtrain_timesteps')
+                    faketrain_latents          = agg_or_last('faketrain_latents')
+                    faketrain_noisy_latents    = agg_or_last('faketrain_noisy_latents')
+                    faketrain_x0_pred          = agg_or_last('faketrain_x0_pred')
 
-                    data_dict = {
-                        "generated_image": wandb.Image(generated_image_grid),
-                        "generated_image_brightness": generated_image_brightness.item(),
-                        "generated_image_std": generated_image_std.item(),
-                        "generator_grad_norm": generator_grad_norm.item(),
-                        "guidance_grad_norm": guidance_grad_norm.item()
-                    } 
+                    # compute metrics/visuals on the aggregated tensors
+                    gen_img_vis = (generated_image*0.5+0.5).clamp(0, 1)
+                    generated_image_brightness = float(gen_img_vis.mean())
+                    generated_image_std        = float(gen_img_vis.std())
+                    generated_image_grid       = prepare_images_for_saving(generated_image, resolution=self.resolution)
 
-                    (
-                        dmtrain_noisy_latents, dmtrain_pred_real_image, dmtrain_pred_fake_image, 
-                        dmtrain_grad, dmtrain_gradient_norm
-                    ) = (
-                        log_dict['dmtrain_noisy_latents'], log_dict['dmtrain_pred_real_image'], log_dict['dmtrain_pred_fake_image'], 
-                        log_dict['dmtrain_grad'], log_dict['dmtrain_gradient_norm']
-                    )
+                    gmin, gmax = dmtrain_grad.min(), dmtrain_grad.max()
+                    grad_norm = (dmtrain_grad - gmin) / (gmax - gmin + 1e-12)
+                    grad_norm = (grad_norm - 0.5)/0.5
+                    gradient  = prepare_images_for_saving(grad_norm, resolution=self.resolution)
 
-                    gradient_brightness = dmtrain_grad.mean()
-                    gradient_std = dmtrain_grad.std(dim=[1, 2, 3]).mean()
+                    gradient_brightness = float(dmtrain_grad.mean())
+                    gradient_std        = float(dmtrain_grad.std(dim=[1, 2, 3]).mean())
 
-                    dmtrain_pred_real_image_mean = (dmtrain_pred_real_image*0.5+0.5).clamp(0, 1).mean()
-                    dmtrain_pred_fake_image_mean = (dmtrain_pred_fake_image*0.5+0.5).clamp(0, 1).mean()
-
-                    dmtrain_pred_read_image_std = (dmtrain_pred_real_image*0.5+0.5).clamp(0, 1).std()
-                    dmtrain_pred_fake_image_std = (dmtrain_pred_fake_image*0.5+0.5).clamp(0, 1).std()
-
-                    dmtrain_noisy_latents_grid = prepare_images_for_saving(dmtrain_noisy_latents, resolution=self.resolution)
+                    dmtrain_noisy_latents_grid   = prepare_images_for_saving(dmtrain_noisy_latents, resolution=self.resolution)
                     dmtrain_pred_real_image_grid = prepare_images_for_saving(dmtrain_pred_real_image, resolution=self.resolution)
                     dmtrain_pred_fake_image_grid = prepare_images_for_saving(dmtrain_pred_fake_image, resolution=self.resolution)
 
-                    gradient = dmtrain_grad 
-                    gradient = (gradient - gradient.min()) / (gradient.max() - gradient.min())
-                    gradient = (gradient - 0.5)/0.5
-                    gradient = prepare_images_for_saving(gradient, resolution=self.resolution)
+                    dmtrain_pred_real_image_mean = float(((dmtrain_pred_real_image*0.5+0.5).clamp(0, 1)).mean())
+                    dmtrain_pred_fake_image_mean = float(((dmtrain_pred_fake_image*0.5+0.5).clamp(0, 1)).mean())
+                    dmtrain_pred_read_image_std  = float(((dmtrain_pred_real_image*0.5+0.5).clamp(0, 1)).std())
+                    dmtrain_pred_fake_image_std  = float(((dmtrain_pred_fake_image*0.5+0.5).clamp(0, 1)).std())
 
-                    gradient_scale_grid = draw_valued_array(
-                        dmtrain_grad.abs().mean(dim=[1, 2, 3]).cpu().numpy(), 
-                        output_dir=self.wandb_folder
-                    )
-
-                    difference_scale_grid = draw_valued_array(
-                        (dmtrain_pred_real_image - dmtrain_pred_fake_image).abs().mean(dim=[1, 2, 3]).cpu().numpy(), 
-                        output_dir=self.wandb_folder
-                    )
-
-                    difference = (dmtrain_pred_fake_image-dmtrain_pred_real_image)
-                    
-                    difference_brightness = difference.mean()
-                    
-                    difference = (difference - difference.min()) / (difference.max() - difference.min())
-                    difference = (difference - 0.5)/0.5
-                    difference = prepare_images_for_saving(difference, resolution=self.resolution)
+                    diff = dmtrain_pred_fake_image - dmtrain_pred_real_image
+                    difference_brightness = float(diff.mean())
+                    dmin, dmax = diff.min(), diff.max()
+                    diff = (diff - dmin) / (dmax - dmin + 1e-12)
+                    diff = (diff - 0.5)/0.5
+                    difference = prepare_images_for_saving(diff, resolution=self.resolution)
 
                     dmtrain_timesteps_grid = draw_valued_array(
-                        log_dict['dmtrain_timesteps'].squeeze().cpu().numpy(),
+                        dmtrain_timesteps.squeeze().cpu().numpy(),
                         output_dir=self.wandb_folder
                     )
 
-                    data_dict.update(
-                        {
-                            "dmtrain_noisy_latents_grid": wandb.Image(dmtrain_noisy_latents_grid),
-                            "dmtrain_pred_real_image_grid": wandb.Image(dmtrain_pred_real_image_grid),
-                            "dmtrain_pred_fake_image_grid": wandb.Image(dmtrain_pred_fake_image_grid),
-                            "loss_dm": loss_dict['loss_dm'].item(),
-                            "loss_fake_mean": loss_dict['loss_fake_mean'].item(),
-                            "dmtrain_gradient_norm": dmtrain_gradient_norm,
-                            "gradient": wandb.Image(gradient),
-                            "difference": wandb.Image(difference),
-                            "gradient_scale_grid": wandb.Image(gradient_scale_grid),
-                            "difference_norm_grid": wandb.Image(difference_scale_grid),
-                            "dmtrain_timesteps_grid": wandb.Image(dmtrain_timesteps_grid),
-                            "gradient_brightness": gradient_brightness.item(),
-                            "difference_brightness": difference_brightness.item(),
-                            "gradient_std": gradient_std.item(),
-                            "dmtrain_pred_real_image_mean": dmtrain_pred_real_image_mean.item(),
-                            "dmtrain_pred_fake_image_mean": dmtrain_pred_fake_image_mean.item(),
-                            "dmtrain_pred_read_image_std": dmtrain_pred_read_image_std.item(),
-                            "dmtrain_pred_fake_image_std": dmtrain_pred_fake_image_std.item()
-                        }
-                    )
+                    # averaged losses over the accumulation window
+                    loss_dm_mean        = float(scalar_means.get('loss_dm',        loss_dict['loss_dm']))
+                    loss_fake_mean_mean = float(scalar_means.get('loss_fake_mean', loss_dict['loss_fake_mean']))
 
-                    (
-                        faketrain_latents, faketrain_noisy_latents, faketrain_x0_pred
-                    ) = (
-                        log_dict['faketrain_latents'], log_dict['faketrain_noisy_latents'], 
-                        log_dict['faketrain_x0_pred']
-                    )
+                    data_dict = {
+                        "generated_image": wandb.Image(generated_image_grid),
+                        "generated_image_brightness": generated_image_brightness,
+                        "generated_image_std": generated_image_std,
+                        "generator_grad_norm": float(generator_grad_norm.item() if torch.is_tensor(generator_grad_norm) else generator_grad_norm),
+                        "guidance_grad_norm": float(guidance_grad_norm.item() if torch.is_tensor(guidance_grad_norm) else guidance_grad_norm),
 
-                    faketrain_latents_grid = prepare_images_for_saving(faketrain_latents, resolution=self.resolution)
-                    faketrain_noisy_latents_grid = prepare_images_for_saving(faketrain_noisy_latents, resolution=self.resolution)
-                    faketrain_x0_pred_grid = prepare_images_for_saving(faketrain_x0_pred, resolution=self.resolution)
+                        "dmtrain_noisy_latents_grid": wandb.Image(dmtrain_noisy_latents_grid),
+                        "dmtrain_pred_real_image_grid": wandb.Image(dmtrain_pred_real_image_grid),
+                        "dmtrain_pred_fake_image_grid": wandb.Image(dmtrain_pred_fake_image_grid),
+                        "loss_dm": loss_dm_mean,
+                        "loss_fake_mean": loss_fake_mean_mean,
+                        "gradient": wandb.Image(gradient),
+                        "difference": wandb.Image(difference),
+                        "dmtrain_timesteps_grid": wandb.Image(dmtrain_timesteps_grid),
 
-                    data_dict.update({
-                        "faketrain_latents": wandb.Image(faketrain_latents_grid),
-                        "faketrain_noisy_latents": wandb.Image(faketrain_noisy_latents_grid),
-                        "faketrain_x0_pred": wandb.Image(faketrain_x0_pred_grid)
-                    })
+                        "gradient_brightness": gradient_brightness,
+                        "difference_brightness": difference_brightness,
+                        "gradient_std": gradient_std,
+                        "dmtrain_pred_real_image_mean": dmtrain_pred_real_image_mean,
+                        "dmtrain_pred_fake_image_mean": dmtrain_pred_fake_image_mean,
+                        "dmtrain_pred_read_image_std": dmtrain_pred_read_image_std,
+                        "dmtrain_pred_fake_image_std": dmtrain_pred_fake_image_std,
 
+                        "effective_batch_size": int(self.batch_size * max(1, accum) * self.accelerator.num_processes),
+                        "optimizer_step": int(self.global_step),
+                    }
+
+                    # GAN extras (aggregated)
                     if self.gan_classifier:
-                        # Always log losses if present
-                        if 'guidance_cls_loss' in loss_dict:
-                            data_dict['guidance_cls_loss'] = float(loss_dict['guidance_cls_loss'])
-                        if 'gen_cls_loss' in loss_dict:
-                            data_dict['gen_cls_loss'] = float(loss_dict['gen_cls_loss'])
+                        if 'guidance_cls_loss' in scalar_means:
+                            data_dict['guidance_cls_loss'] = float(scalar_means['guidance_cls_loss'])
+                        if 'gen_cls_loss' in scalar_means:
+                            data_dict['gen_cls_loss'] = float(scalar_means['gen_cls_loss'])
 
-                        # Hinge/BCE path: we have "pred_realism_*"
-                        if ("pred_realism_on_fake" in log_dict) and ("pred_realism_on_real" in log_dict):
-                            pred_realism_on_fake = log_dict["pred_realism_on_fake"]
-                            pred_realism_on_real = log_dict["pred_realism_on_real"]
-                            hist_pred_realism_on_fake = draw_probability_histogram(pred_realism_on_fake.detach().cpu().numpy())
-                            hist_pred_realism_on_real = draw_probability_histogram(pred_realism_on_real.detach().cpu().numpy())
+                        prf = batched.get("pred_realism_on_fake", None)
+                        prr = batched.get("pred_realism_on_real", None)
+                        if (prf is not None) and (prr is not None):
+                            hist_pred_realism_on_fake = draw_probability_histogram(prf.numpy())
+                            hist_pred_realism_on_real = draw_probability_histogram(prr.numpy())
                             data_dict.update({
                                 "hist_pred_realism_on_fake": wandb.Image(hist_pred_realism_on_fake),
                                 "hist_pred_realism_on_real": wandb.Image(hist_pred_realism_on_real),
-                                "pred_realism_on_fake_mean": float(pred_realism_on_fake.mean()),
-                                "pred_realism_on_real_mean": float(pred_realism_on_real.mean()),
+                                "pred_realism_on_fake_mean": float(prf.mean()),
+                                "pred_realism_on_real_mean": float(prr.mean()),
                             })
 
-                        # WGAN path: we have "critic_*" (no pred_realism_* keys)
-                        elif ("critic_fake" in log_dict) and ("critic_real" in log_dict):
-                            critic_fake = log_dict["critic_fake"]
-                            critic_real = log_dict["critic_real"]
+                        cf = batched.get("critic_fake", None)
+                        cr = batched.get("critic_real", None)
+                        if (cf is not None) and (cr is not None):
                             data_dict.update({
-                                "critic_fake_mean": float(critic_fake.mean()),
-                                "critic_real_mean": float(critic_real.mean()),
+                                "critic_fake_mean": float(cf.mean()),
+                                "critic_real_mean": float(cr.mean()),
                             })
-                            if "wgan_gp" in log_dict:
-                                # could be a Python float or tensor
-                                wgan_gp = log_dict["wgan_gp"]
-                                wgan_gp = float(wgan_gp) if not torch.is_tensor(wgan_gp) else float(wgan_gp.detach().cpu().item())
-                                data_dict["wgan_gp"] = wgan_gp
-
-                            # Optional: visualize critic scores (not probabilities; use sigmoid only for plotting)
-                            cf_sig = torch.sigmoid(critic_fake.detach())
-                            cr_sig = torch.sigmoid(critic_real.detach())
-                            hist_cf = draw_probability_histogram(cf_sig.cpu().numpy())
-                            hist_cr = draw_probability_histogram(cr_sig.cpu().numpy())
+                            cf_sig = torch.sigmoid(cf)
+                            cr_sig = torch.sigmoid(cr)
+                            hist_cf = draw_probability_histogram(cf_sig.numpy())
+                            hist_cr = draw_probability_histogram(cr_sig.numpy())
                             data_dict.update({
                                 "hist_critic_fake_sigmoid": wandb.Image(hist_cf),
                                 "hist_critic_real_sigmoid": wandb.Image(hist_cr),
                             })
+                            if 'wgan_gp' in scalar_means:
+                                data_dict['wgan_gp'] = float(scalar_means['wgan_gp'])
 
-                    wandb.log(
-                        data_dict,
-                        step=self.global_step
-                    )
+                    # Use accelerator.log so only rank 0 logs to WandB
+                    wandb.log(data_dict, step=self.global_step)
+
+            # either way, after sync we’re ready for the next window
+            if accelerator.sync_gradients:
+                self._mb_clear()
 
         self.accelerator.wait_for_everyone()
+
 
 
     def train(self):
         accum = self.accelerator.gradient_accumulation_steps
         for _ in range(self.step, self.train_iters):
             self.train_one_step()
-
             # We just finished one micro-step; did we close an accumulation window?
             did_sync = ((self.step + 1) % max(1, accum) == 0)
 

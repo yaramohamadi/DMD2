@@ -184,11 +184,5 @@ ignored_cache
 *.jpg
 *.png
 
-<<<<<<< Updated upstream
-0_mystuff/checkpoint_path/
-0_mystuff/output/
-0_mystuff/checkpoints/
-=======
 0_mystuff/
->>>>>>> Stashed changes
 0_mystuff_face/
