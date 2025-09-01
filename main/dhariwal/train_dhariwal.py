@@ -362,7 +362,10 @@ class Trainer:
                         generator_grad_norm = torch.nn.utils.clip_grad_norm_(self.model.feedforward_model.parameters(),
                                                                             self.max_grad_norm)
                     self.optimizer_generator.step()
+                    # if we also compute gan loss, the classifier also received gradient 
+                    # zero out guidance model's gradient avoids undesired gradient accumulation
                     self.optimizer_generator.zero_grad()
+                    self.optimizer_guidance.zero_grad()
                     self.scheduler_generator.step()
             else:
                 if accelerator.sync_gradients:
@@ -392,6 +395,7 @@ class Trainer:
                 self.optimizer_guidance.step()
                 self.optimizer_guidance.zero_grad()
                 self.scheduler_guidance.step()
+                self.optimizer_generator.zero_grad()
             else:
                 guidance_grad_norm = torch.tensor(0.0, device=accelerator.device)
 
@@ -399,15 +403,46 @@ class Trainer:
         loss_dict = {**gen_loss_dict, **guid_loss_dict}
         log_dict  = {**gen_log_dict,  **guid_log_dict}
 
+        self.log_everything(loss_dict, log_dict, generator_grad_norm, guidance_grad_norm, accum)
+
+
+    def train(self):
+        accum = self.accelerator.gradient_accumulation_steps
+        for _ in range(self.step, self.train_iters):
+            self.train_one_step()
+            # We just finished one micro-step; did we close an accumulation window?
+            did_sync = ((self.step + 1) % max(1, accum) == 0)
+
+            if did_sync and self.accelerator.is_main_process:
+                global_step = (self.step + 1) // max(1, accum)
+
+                if (not self.no_save) and global_step % self.log_iters == 0:
+                    # train_one_step() already computed/used self.global_step, but ensure consistency:
+                    self.global_step = global_step
+                    self.save()
+
+                current_time = time.time()
+                if self.previous_time is None:
+                    self.previous_time = current_time
+                else:
+                    wandb.log({"per iteration time": current_time - self.previous_time}, step=global_step)
+                    self.previous_time = current_time
+
+            self.accelerator.wait_for_everyone()
+            self.step += 1  # micro-step counter
+
+
+    def log_everything(self, loss_dict, log_dict, generator_grad_norm, guidance_grad_norm, accum=None):
+        
         # Feed THIS micro-batch into the accumulation buffers
         self._mb_put(log_dict, loss_dict)
 
         # ===== Logging once per optimizer step =====
-        if accelerator.sync_gradients and (self.global_step % self.wandb_iters == 0):
+        if self.accelerator.sync_gradients and (self.global_step % self.wandb_iters == 0):
             # IMPORTANT: do aggregation/gather on ALL ranks to avoid deadlock
             batched, scalar_means = self._mb_concat_and_gather()
 
-            if accelerator.is_main_process:
+            if self.accelerator.is_main_process:
                 with torch.no_grad():
                     def agg_or_last(key):
                         v = batched.get(key, None)
@@ -531,37 +566,9 @@ class Trainer:
                     wandb.log(data_dict, step=self.global_step)
 
             # either way, after sync we’re ready for the next window
-            if accelerator.sync_gradients:
+            if self.accelerator.sync_gradients:
                 self._mb_clear()
-
         self.accelerator.wait_for_everyone()
-
-
-
-    def train(self):
-        accum = self.accelerator.gradient_accumulation_steps
-        for _ in range(self.step, self.train_iters):
-            self.train_one_step()
-            # We just finished one micro-step; did we close an accumulation window?
-            did_sync = ((self.step + 1) % max(1, accum) == 0)
-
-            if did_sync and self.accelerator.is_main_process:
-                global_step = (self.step + 1) // max(1, accum)
-
-                if (not self.no_save) and global_step % self.log_iters == 0:
-                    # train_one_step() already computed/used self.global_step, but ensure consistency:
-                    self.global_step = global_step
-                    self.save()
-
-                current_time = time.time()
-                if self.previous_time is None:
-                    self.previous_time = current_time
-                else:
-                    wandb.log({"per iteration time": current_time - self.previous_time}, step=global_step)
-                    self.previous_time = current_time
-
-            self.accelerator.wait_for_everyone()
-            self.step += 1  # micro-step counter
 
 
 def parse_args():
