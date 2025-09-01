@@ -1,4 +1,4 @@
-export PROJECT_PATH="0_mystuff_face" # change this to your own checkpoint folder 
+export PROJECT_PATH="0_myfiles_face" # change this to your own checkpoint folder 
 export WANDB_ENTITY="yara-mohammadi-bahram-1-ecole-superieure-de-technologie" # change this to your own wandb entity
 export WANDB_PROJECT="DMD_face" # change this to your own wandb project
 export CUDA_VISIBLE_DEVICES=0,1,2,3
