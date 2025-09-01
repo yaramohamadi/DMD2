@@ -184,6 +184,6 @@ ignored_cache
 *.jpg
 *.png
 
-0_mystuff/*
-0_mystuff_face/datasets/*
-0_mystuff_face/checkpoint_path/*
+0_myfiles_imagenet/*
+0_myfiles_face/datasets/*
+0_myfiles_face/checkpoint_path/*
