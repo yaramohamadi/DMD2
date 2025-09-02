@@ -15,6 +15,8 @@ pip install torch==2.0.1+cu118 torchvision==0.15.2+cu118 --extra-index-url https
 pip install -r requirements.txt
 python setup.py  develop
 pip install lpips
+pip install scikit-learn
+
 # 
 # add the submodule (no installs happen here)
 git submodule add https://github.com/yaramohamadi/guided-diffusion third_party/dhariwal

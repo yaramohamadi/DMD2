@@ -19,6 +19,7 @@ import json
 import time
 import os
 from pathlib import Path
+import math
 
 from main.dhariwal.dhariwal_network import get_edm_network  # this builds DhariwalUNetAdapter
 # NEW: baseline evaluators
@@ -94,68 +95,82 @@ def create_generator(checkpoint_path, base_model=None):
     return generator
 
 
+
 @torch.no_grad()
 def sample(accelerator, current_model, args, model_index):
     """
-    Assumes your Dhariwal adapter follows the EDM-style forward:
-        f(x_noised, sigma, y) -> x_denoised in [-1,1]
-    If your adapter instead needs a sampler loop, swap this function out
-    with your guided-diffusion sampling util.
+    Generate exactly args.total_eval_samples images across all processes,
+    with a global tqdm progress bar (on rank 0). Returns NHWC uint8 tensor on CPU.
     """
+    dev   = accelerator.device
+    world = accelerator.num_processes
+    bs    = args.eval_batch_size
+    total = args.total_eval_samples
+
+    # How many synchronized steps do we need if every rank makes `bs` images each step?
+    steps = math.ceil(total / float(bs * world))
+
+    # Make the model fast for inference
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
+    torch.backends.cudnn.benchmark = True
+
     m = getattr(current_model, "module", current_model)
-    Lm = getattr(m, "label_dim", 0)  # unconditional if 0
-    dev = accelerator.device
-
-    # constant scalar sigma 't' tensor to match your preconditioning interface
-    t = torch.full((args.eval_batch_size,), args.conditioning_sigma, device=dev)
-
+    Lm = getattr(m, "label_dim", 0)
     current_model.eval()
-    all_images = []
-    all_images_tensor = []
 
-    set_seed(args.seed + accelerator.process_index)
-
-    def constant_label_zero(B):
+    def const_label_zero(B):
         if Lm == 0:
             return None
         y = torch.zeros(B, Lm, device=dev, dtype=torch.float32)
         y[:, 0] = 1.0
         return y
 
-    # generate until we hit total_eval_samples (same logic as your original)
-    while len(all_images_tensor) * args.eval_batch_size * accelerator.num_processes < args.total_eval_samples:
-        noise = torch.randn(args.eval_batch_size, 3, args.resolution, args.resolution, device=dev)
-        y_const0 = constant_label_zero(args.eval_batch_size)
+    # only rank 0 collects into CPU memory
+    rank0_chunks = []
+    if accelerator.is_main_process:
+        pbar = tqdm(total=total, desc=f"Sampling {total} @ {args.resolution}", ncols=100)
 
-        # --- KEY CALL (unchanged API expectation) ---
-        imgs = current_model(noise * args.conditioning_sigma, t, y_const0)
+    for _ in range(steps):
+        # All ranks generate the same batch size -> gather has consistent shapes
+        cur = bs
+        t   = torch.full((cur,), args.conditioning_sigma, device=dev)
 
-        # to uint8 NHWC for logging / FID
-        imgs_u8 = ((imgs + 1.0) * 127.5).clamp(0, 255).to(torch.uint8).permute(0, 2, 3, 1).contiguous()
+        noise = torch.randn(cur, 3, args.resolution, args.resolution, device=dev)
 
+        # Mixed precision speeds up inference a lot and is safe for sampling/feature extraction
+        with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+            imgs = current_model(noise * args.conditioning_sigma, t, const_label_zero(cur))  # [-1,1], NCHW
+
+        imgs_u8 = ((imgs + 1.0) * 127.5).clamp(0, 255).to(torch.uint8)     # NCHW
+        imgs_u8 = imgs_u8.permute(0, 2, 3, 1).contiguous()                  # NHWC
+
+        # Gather (shape-consistent across ranks), then only rank 0 stores/updates tqdm
         gathered = accelerator.gather(imgs_u8)
-        all_images.append(gathered.cpu().numpy())
-        all_images_tensor.append(gathered.cpu())
-
-    # concat & log
-    all_images = np.concatenate(all_images, axis=0)[:args.total_eval_samples]
-    all_images_tensor = torch.cat(all_images_tensor, dim=0)[:args.total_eval_samples]
+        if accelerator.is_main_process:
+            rank0_chunks.append(gathered.cpu())
+            pbar.update(gathered.size(0))  # global increment by world*bs each step
 
     if accelerator.is_main_process:
-        grid_size = int(args.test_visual_batch_size ** 0.5)
-        grid = all_images[:grid_size * grid_size].reshape(
-            grid_size, grid_size, args.resolution, args.resolution, 3
-        )
-        grid = np.swapaxes(grid, 1, 2).reshape(
-            grid_size * args.resolution, grid_size * args.resolution, 3
-        )
+        pbar.close()
+        all_images_tensor = torch.cat(rank0_chunks, dim=0)[:total]  # [N, H, W, 3] uint8 on CPU
+
+        # build a preview grid with an auto grid size (near-square)
+        n = all_images_tensor.size(0)
+        g = int(np.floor(np.sqrt(min(100, n))))  # cap grid to 100 cells
+        g = max(1, g)
+        grid = all_images_tensor[:g*g].numpy().reshape(g, g, args.resolution, args.resolution, 3)
+        grid = np.swapaxes(grid, 1, 2).reshape(g*args.resolution, g*args.resolution, 3)
+
         wandb.log({
             "generated_image_grid": wandb.Image(grid),
-            "image_mean": all_images_tensor.float().mean().item(),
-            "image_std": all_images_tensor.float().std().item(),
-            "eval/label_mode": "constant_zero",
+            "image_mean": float(all_images_tensor.float().mean().item()),
+            "image_std":  float(all_images_tensor.float().std().item()),
+            "eval/label_mode": "constant_zero" if Lm > 0 else "uncond",
             "eval/model_label_dim": int(Lm),
         }, step=model_index)
+    else:
+        all_images_tensor = torch.empty(0, dtype=torch.uint8)  # non-main returns empty placeholder
 
     accelerator.wait_for_everyone()
     return all_images_tensor
@@ -181,6 +196,7 @@ def evaluate():
     parser.add_argument("--fid_npz_root", type=str, required=True, help="Directory that contains category npz files (e.g., .../fid_npz/ffhq.npz)")
     parser.add_argument("--lpips_cluster_size", type=int, default=100, help="Cluster size for intra-LPIPS")
     parser.add_argument("--fewshotdataset", type=str, default="", help="Path to few-shot dataset (intra-LPIPS eval)")
+    parser.add_argument("--no_lpips", action="store_true", help="Disable LPIPS computation to save time")
 
     args = parser.parse_args()
 
@@ -273,11 +289,17 @@ def evaluate():
                 if accelerator.is_main_process:
                     evaluator = Evaluator(eval_args, imgs_nchw_f01, ref_npz_path, args.lpips_cluster_size)
                     fid_score = evaluator.calc_fid()
-                    intra_lpips = evaluator.calc_intra_lpips()
+                    prec, rec = evaluator.calc_precision_recall(nearest_k=5)
+                    if args.no_lpips:
+                        intra_lpips = -1.0
+                    else:
+                        intra_lpips = evaluator.calc_intra_lpips()
                     stats["fid"] = float(fid_score)
                     stats["intra_lpips"] = float(intra_lpips)
-                    print(f"checkpoint {checkpoint} FID {fid_score:.4f}, Intra-LPIPS {intra_lpips:.4f}")
-                    overall_stats[checkpoint] = stats
+                    stats["precision"] = float(prec)
+                    stats["recall"] = float(rec)
+                    print(f"checkpoint {checkpoint} FID {fid_score:.4f} Precision {prec:.4f} Recall {rec:.4f} Intra-LPIPS {intra_lpips:.4f}")
+                    overall_stas[checkpoint] = stats
 
                 if accelerator.is_main_process:
                     wandb.log(stats, step=model_index)
