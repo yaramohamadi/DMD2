@@ -1,103 +1,145 @@
-from tqdm import tqdm 
+from tqdm import tqdm
 from PIL import Image
 import numpy as np
-import argparse 
-import torch 
+import argparse
+import torch
 import lmdb
-import glob 
-import json 
-import os 
+import glob
+import json
+import os
+from pathlib import Path
 
-def store_arrays_to_lmdb(env, arrays_dict, start_index=0):
-    """
-    Store rows of multiple numpy arrays in a single LMDB.
-    Each row is stored separately with a naming convention.
-    """
-    with env.begin(write=True) as txn:
-        for array_name, array in arrays_dict.items():
-            for i, row in enumerate(array):
-                # Convert row to bytes
-                row_bytes = row.tobytes()
-                data_key = f'{array_name}_{start_index+i}_data'.encode()
-                txn.put(data_key, row_bytes)
+IMG_EXTS = (".png", ".jpg", ".jpeg", ".webp")
 
-def get_array_shape_from_lmdb(lmdb_path, array_name):
-    with lmdb.open(lmdb_path) as env:
-        with env.begin() as txn:
-            image_shape = txn.get(f"{array_name}_shape".encode()).decode()
-            image_shape = tuple(map(int, image_shape.split()))
+def list_images_rec(root):
+    files = []
+    for ext in IMG_EXTS:
+        files.extend(glob.glob(os.path.join(root, "**", f"*{ext}"), recursive=True))
+    files = sorted(files)
+    return files
 
-    return image_shape 
+def build_or_load_labels(data_path):
+    label_path = os.path.join(data_path, "dataset.json")
+    if os.path.exists(label_path):
+        labels = dict(json.load(open(label_path))["labels"])
+        return labels
 
-def load_ode_file(ode_file):
-    ode_dict = torch.load(ode_file)
+    # Build labels from folder structure (class-per-subdir)
+    print(f"[INFO] {label_path} not found. Creating it...")
+    labels = {}
+    class_dirs = sorted([p for p in glob.glob(os.path.join(data_path, "*")) if os.path.isdir(p)])
+    class_to_idx = {os.path.basename(d): i for i, d in enumerate(class_dirs)}
 
-    ode_dict.pop('prompt_list', None)  # Remove 'prompt_list' if exists
-    ode_dict.pop('batch_index', None)  # Remove 'batch_index' if exists
+    total = 0
+    for cls_name, idx in class_to_idx.items():
+        for ext in IMG_EXTS:
+            for fp in glob.glob(os.path.join(data_path, cls_name, f"*{ext}")):
+                key = os.path.join(cls_name, os.path.basename(fp))
+                labels[key] = idx
+                total += 1
 
-    return ode_dict
+    with open(label_path, "w") as f:
+        json.dump({"labels": list(labels.items())}, f, indent=4)
+    print(f"[INFO] Created dataset.json with {total} entries.")
+    return labels
 
-# Example usage:
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data_path", type=str, required=True, help="path to imagenet")
-    parser.add_argument("--lmdb_path", type=str, required=True, help="path to lmdb")
-
+    parser.add_argument("--data_path", type=str, required=True, help="root folder of images")
+    parser.add_argument("--lmdb_path", type=str, required=True, help="path to LMDB dir")
+    parser.add_argument("--chunk_size", type=int, default=2048, help="images per LMDB commit")
+    parser.add_argument("--map_size_gb", type=float, default=64.0, help="LMDB map size (GB)")
+    parser.add_argument("--force_rgb", action="store_true", help="convert to RGB")
     args = parser.parse_args()
 
-    # figure out the maximum map size needed 
-    total_array_size = 1000000000000  # adapt to your need, set to 1TB by default 
-    env = lmdb.open(args.lmdb_path, map_size=total_array_size * 2) 
+    # Collect files (flat or nested)
+    files = list_images_rec(args.data_path)
+    if len(files) == 0:
+        raise ValueError(f"No images found under: {args.data_path}")
 
-    # Load all images and labels 
-    all_image_folders = sorted(glob.glob(os.path.join(args.data_path, "*")))
+    # Load or build labels
+    labels_dict = build_or_load_labels(args.data_path)
 
-    label_path = os.path.join(args.data_path, "dataset.json")
+    # Compute shape using the first image
+    with Image.open(files[0]) as im0:
+        if args.force_rgb:
+            im0 = im0.convert("RGB")
+        arr0 = np.array(im0)
+    if arr0.ndim != 3 or arr0.shape[2] not in (1, 3, 4):
+        raise ValueError(f"Unexpected image shape for {files[0]}: {arr0.shape}")
+    H, W = arr0.shape[:2]
+    C = 3 if args.force_rgb else (arr0.shape[2] if arr0.ndim == 3 else 1)
 
-    labels = json.load(open(label_path))["labels"]
-    labels = dict(labels)
+    # LMDB open with sane flags for NFS
+    map_size = int(args.map_size_gb * (1024**3))
+    env = lmdb.open(
+        args.lmdb_path,
+        map_size=map_size,
+        subdir=True,
+        lock=True,
+        readahead=False,   # better when dataset is bigger than RAM / NFS
+        writemap=False,    # safer default on network FS
+        map_async=True,    # queue disk writes; call env.sync() at the end
+    )
 
-    counter = 0 
+    # Write loop (streaming, chunked)
+    txn = env.begin(write=True)
+    n_written = 0
 
-    # dump to lmdb 
-    for image_folder in tqdm(all_image_folders):
-        image_files = sorted(glob.glob(os.path.join(image_folder, "*.png")))
+    pbar = tqdm(files, desc="Writing LMDB")
+    for fp in pbar:
+        # derive label key as "<class>/<filename>"
+        parts = Path(fp).parts
+        # try to find the class folder relative to data_path
+        rel = str(Path(fp).relative_to(args.data_path))
+        cls_and_file = rel.replace("\\", "/")  # normalize
+        # If dataset.json was created from class folders, labels_dict expects "<class>/<file>"
+        # If there are no class folders, you can use a single-class setting or adapt here:
+        if cls_and_file not in labels_dict:
+            # fallback: no-class structure -> single class 0
+            # or raise error; here we choose single class
+            label = 0
+        else:
+            label = labels_dict[cls_and_file]
 
-        if not os.path.isdir(image_folder) or len(image_files) == 0:
-            continue
+        with Image.open(fp) as im:
+            if args.force_rgb:
+                im = im.convert("RGB")
+            arr = np.array(im, dtype=np.uint8)
+        if arr.ndim == 2:  # grayscale
+            arr = np.expand_dims(arr, -1)
+        if arr.shape[2] != C:
+            # normalize channels according to first image
+            if C == 3:
+                arr = np.array(Image.fromarray(arr.squeeze() if arr.shape[2] == 1 else arr).convert("RGB"), dtype=np.uint8)
+            elif C == 1:
+                arr = np.array(Image.fromarray(arr).convert("L"), dtype=np.uint8)[..., None]
+        arr = arr.transpose(2, 0, 1).copy(order="C")  # CHW
 
-        image_list = []
-        label_list = [] 
-        for image_file in image_files:
-            image = np.array(Image.open(image_file))
-            image = image.transpose(2, 0, 1)
-            image_list.append(image)
+        # Put bytes
+        txn.put(f"images_{n_written}_data".encode(), arr.tobytes())
+        txn.put(f"labels_{n_written}_data".encode(), np.int64(label).tobytes())
+        n_written += 1
 
-            label_key = os.path.join(*image_file.split("/")[-2:])
-            label = labels[label_key]
-            label_list.append(label)
+        # Commit periodically
+        if (n_written % args.chunk_size) == 0:
+            txn.commit()
+            txn = env.begin(write=True)
+            pbar.set_postfix(committed=n_written)
 
-        image_list = np.stack(image_list, axis=0)
-        label_list = np.array(label_list)
+    # Final commit
+    txn.commit()
 
-        data_dict = {
-            'images': image_list,
-            'labels': label_list
-        }
+    # Store metadata (no huge prints)
+    with env.begin(write=True) as meta_txn:
+        meta_txn.put(b"images_shape", f"{n_written} {C} {H} {W}".encode())
+        meta_txn.put(b"labels_shape", f"{n_written}".encode())
+        meta_txn.put(b"images_dtype", b"uint8")
+        meta_txn.put(b"labels_dtype", b"int64")
 
-        store_arrays_to_lmdb(env, data_dict, start_index=counter)
-        counter += len(image_list)
-
-    # save each entry's shape to lmdb
-    with env.begin(write=True) as txn:
-        for key, val in data_dict.items():
-            print(key, val)
-            array_shape = np.array(val.shape)
-            array_shape[0] = counter
-
-            shape_key =  f"{key}_shape".encode()
-            shape_str = " ".join(map(str, array_shape))
-            txn.put(shape_key, shape_str.encode())
+    env.sync()   # flush async writes
+    env.close()
+    print(f"[INFO] Done. Wrote {n_written} items to {args.lmdb_path} with shape [{n_written}, {C}, {H}, {W}].")
 
 if __name__ == "__main__":
     main()
