@@ -1,18 +1,18 @@
 export PROJECT_PATH="0_mystuff_face" # change this to your own checkpoint folder 
 export WANDB_ENTITY="yara-mohammadi-bahram-1-ecole-superieure-de-technologie" # change this to your own wandb entity
 export WANDB_PROJECT="DMD_face" # change this to your own wandb project
-export CUDA_VISIBLE_DEVICES=0,1,2,3
+export CUDA_VISIBLE_DEVICES=0,2
 
 export MASTER_ADDR=127.0.0.1
 export MASTER_PORT=$(shuf -i 20000-65000 -n 1)   # pick a random free port
 
-CUDA_VISIBLE_DEVICES=0,1,2 torchrun --nproc_per_node 3 --nnodes 1 --master_addr "$MASTER_ADDR" --master_port "$MASTER_PORT" main/dhariwal/train_dhariwal.py \
+CUDA_VISIBLE_DEVICES=0,2 torchrun --nproc_per_node 2 --nnodes 1 --master_addr "$MASTER_ADDR" --master_port "$MASTER_PORT" main/dhariwal/train_dhariwal.py \
     --generator_lr 2e-6  \
     --guidance_lr 2e-6  \
     --train_iters 10000000 \
     --output_path $PROJECT_PATH/checkpoint_path/ffhq256_babies_dmd0.1_multiheadGAN \
     --checkpoint_path $PROJECT_PATH/checkpoint_path/ffhq256_babies_dmd0.1_multiheadGAN/time_1756313057_seed10/checkpoint_model_008600 \
-    --batch_size 1 \
+    --batch_size 2 \
     --initialie_generator --log_iters 100 \
     --resolution 256 \
     --label_dim 0 \
@@ -37,8 +37,7 @@ CUDA_VISIBLE_DEVICES=0,1,2 torchrun --nproc_per_node 3 --nnodes 1 --master_addr 
     --gan_head_type "global" \
     --gan_head_layers "all" \
     --gan_adv_loss "bce" \
-    --use_fp16
-    
+
 # dmd loss weight is added by me
 #     
 # The following lines are added by me for GAN multi-head (Sushko §3.2)

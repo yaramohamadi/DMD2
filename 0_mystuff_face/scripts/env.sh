@@ -1,4 +1,5 @@
 # In conda env 
+# eval "$(/home/ens/AT74470/miniconda3/bin/conda shell.bash hook)"
 eval "$(/home/ens/AT74470/miniconda3/bin/conda shell.bash hook)"
 
 conda create -n dmd2 python=3.8 -y 

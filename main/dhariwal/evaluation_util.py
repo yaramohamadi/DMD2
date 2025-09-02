@@ -532,14 +532,52 @@ def calculate_activation_statistics(
     return mu, sigma
 
 
-def compute_statistics_of_path(path):
+
+def compute_statistics_of_path(path, batch_size=32, device="cuda", dims=2048, num_workers=0):
+
     if path.endswith(".npz"):
         with np.load(path) as f:
-            m, s = f["mu"][:], f["sigma"][:]
-    else:
-        raise NotImplementedError
+            return f["mu"][:], f["sigma"][:]
 
-    return m, s
+    # Prepare transform (no resize!)
+    transform = transforms.Compose([
+        transforms.ToTensor(),  # [0, 1], float32
+    ])
+
+    class ImageFolderDataset(Dataset):
+        def __init__(self, folder):
+            self.paths = sorted([
+                os.path.join(folder, fname)
+                for fname in os.listdir(folder)
+                if fname.lower().endswith((".jpg", ".jpeg", ".png", ".bmp"))
+            ])
+            self.transform = transform
+
+        def __len__(self):
+            return len(self.paths)
+
+        def __getitem__(self, idx):
+            img = Image.open(self.paths[idx]).convert("RGB")
+            return self.transform(img)
+
+    dataset = ImageFolderDataset(path)
+    dataloader = DataLoader(dataset, batch_size=batch_size, num_workers=num_workers, shuffle=False)
+
+    # Stack all samples into a single tensor
+    all_samples = []
+    for batch in tqdm(dataloader, desc=f"Loading images from {path}"):
+        all_samples.append(batch)
+    samples_tensor = torch.cat(all_samples, dim=0)
+
+    # Create model only once
+    block_idx = InceptionV3.BLOCK_INDEX_BY_DIM[dims]
+    model = InceptionV3([block_idx], resize_input=True, normalize_input=True).to(device).eval()
+
+    # Use the same logic as compute_statistics_of_tensor
+    mu, sigma = calculate_activation_statistics(samples_tensor, model, batch_size, dims, device, num_workers)
+
+    return mu, sigma
+
 
 
 def compute_statistics_of_tensor(
