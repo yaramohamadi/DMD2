@@ -20,6 +20,7 @@ import time
 import os
 from pathlib import Path
 import math
+from PIL import Image
 
 from main.dhariwal.dhariwal_network import get_edm_network  # this builds DhariwalUNetAdapter
 # NEW: baseline evaluators
@@ -139,8 +140,8 @@ def sample(accelerator, current_model, args, model_index):
         noise = torch.randn(cur, 3, args.resolution, args.resolution, device=dev)
 
         # Mixed precision speeds up inference a lot and is safe for sampling/feature extraction
-        with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-            imgs = current_model(noise * args.conditioning_sigma, t, const_label_zero(cur))  # [-1,1], NCHW
+        # with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+        imgs = current_model(noise * args.conditioning_sigma, t, const_label_zero(cur))  # [-1,1], NCHW
 
         imgs_u8 = ((imgs + 1.0) * 127.5).clamp(0, 255).to(torch.uint8)     # NCHW
         imgs_u8 = imgs_u8.permute(0, 2, 3, 1).contiguous()                  # NHWC
@@ -265,12 +266,39 @@ def evaluate():
                 continue
 
             try:
-                generator = create_generator(
-                    str(ckpt_path / "pytorch_model.bin"),
-                    base_model=generator
-                ).to(accelerator.device)
+                # generator = create_generator(
+                #     str(ckpt_path / "pytorch_model.bin"),
+                #     base_model=generator
+                # ).to(accelerator.device)
+# 
+                # all_images_tensor = sample(accelerator, generator, args, model_index)
 
-                all_images_tensor = sample(accelerator, generator, args, model_index)
+                # TMP TODO: save numpy for inspection
+                tmp_npy = os.path.join(folder, f"_tmp_imgs_{model_index:06d}.npy")
+                # print('saving', tmp_npy)
+                # np.save(tmp_npy, all_images_tensor.numpy())
+                # print('saved', tmp_npy)
+                # exit()
+
+                # Reload mem-mapped to keep RAM down (zero-copy into torch via from_numpy)
+                print('loading', tmp_npy)
+                imgs_memmap = np.load(tmp_npy, mmap_mode='r')   # dtype=uint8, shape [N, H, W, 3]
+                all_images_tensor = torch.from_numpy(imgs_memmap)  # still NHWC uint8, CPU
+
+                # build a preview grid with an auto grid size (near-square)
+                n = all_images_tensor.size(0)
+                g = int(np.floor(np.sqrt(min(100, n))))  # cap grid to 100 cells
+                g = max(1, g)
+                grid = all_images_tensor[:g*g].numpy().reshape(g, g, args.resolution, args.resolution, 3)
+                grid = np.swapaxes(grid, 1, 2).reshape(g*args.resolution, g*args.resolution, 3)
+
+                # save grid locally too
+                grid_path = "grid_{model_index:06d}.png"
+
+                # ensure C-contiguous uint8 for PIL
+                Image.fromarray(np.ascontiguousarray(grid)).save(grid_path)
+
+                exit()
 
                 imgs_nchw_f01 = all_images_tensor.permute(0, 3, 1, 2).to(torch.float32) / 255.0
 
@@ -299,7 +327,7 @@ def evaluate():
                     stats["precision"] = float(prec)
                     stats["recall"] = float(rec)
                     print(f"checkpoint {checkpoint} FID {fid_score:.4f} Precision {prec:.4f} Recall {rec:.4f} Intra-LPIPS {intra_lpips:.4f}")
-                    overall_stas[checkpoint] = stats
+                    overall_stats[checkpoint] = stats
 
                 if accelerator.is_main_process:
                     wandb.log(stats, step=model_index)

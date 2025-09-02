@@ -8,12 +8,14 @@ export CATEGORY="FFHQ"                                     # -> ${FID_NPZ_ROOT}/
 # DST="$PROJECT_PATH/datasets/fid_npz/"
 # mkdir -p "$DST"
 # rsync -avh --info=progress2 "$SRC" "$DST"
-
+# exit 0
 # pick a single GPU (recommended: single process to match baseline sampling)
 export CUDA_VISIBLE_DEVICES=3
 
+# /export/livia/home/vision/Ymohammadi/DMD2_checkpoints/FFHQ256_dmd1/time_1756780684_seed10/
+
 python -u main/dhariwal/test_folder_dhariwal.py \
-  --folder /export/livia/home/vision/Ymohammadi/DMD2_checkpoints/FFHQ256_dmd1/time_1756780684_seed10/ \
+  --folder  /export/livia/home/vision/Ymohammadi/DMD2_checkpoints/tmp\
   --wandb_name FFHQ_dmd1_test \
   --wandb_entity $WANDB_ENTITY \
   --wandb_project $WANDB_PROJECT \

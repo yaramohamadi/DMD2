@@ -554,7 +554,7 @@ def calculate_activation_statistics(
     act = get_activations(files, model, batch_size, dims, device, num_workers)
     mu = np.mean(act, axis=0)
     sigma = np.cov(act, rowvar=False)
-    return mu, sigma
+    return mu, sigma, act
 
 
 def compute_statistics_of_path(path, batch_size=32, device="cuda", dims=2048,
@@ -566,7 +566,9 @@ def compute_statistics_of_path(path, batch_size=32, device="cuda", dims=2048,
 
     if path.endswith(".npz"):
         with np.load(path) as f:
-            return f["mu"][:], f["sigma"][:]
+            print("keys are ----------------------------")
+            print(f.keys())
+            return f["mu"][:], f["sigma"][:], f["act"][:]
 
     transform = transforms.Compose([transforms.ToTensor()])  # [0,1] float32
 
@@ -589,17 +591,17 @@ def compute_statistics_of_path(path, batch_size=32, device="cuda", dims=2048,
     block_idx = InceptionV3.BLOCK_INDEX_BY_DIM[dims]
     model = InceptionV3([block_idx], resize_input=True, normalize_input=True).to(device).eval()
 
-    mu, sigma = calculate_activation_statistics(
+    mu, sigma, act = calculate_activation_statistics(
         samples_tensor, model, batch_size, dims, device, num_workers
     )
-    return mu, sigma
+    return mu, sigma, act
 
 
 
 def compute_statistics_of_tensor(
     samples, model, batch_size, dims, device, num_workers=1
 ):
-    m, s = calculate_activation_statistics(
+    m, s, _ = calculate_activation_statistics(
         samples, model, batch_size, dims, device, num_workers
     )
     return m, s
@@ -613,7 +615,7 @@ def calculate_fid_given_paths(
 
     model = InceptionV3([block_idx]).to(device)
 
-    m1, s1 = compute_statistics_of_path(path)
+    m1, s1, _ = compute_statistics_of_path(path)
     m2, s2 = compute_statistics_of_tensor(
         samples, model, batch_size, dims, device, num_workers
     )
@@ -692,6 +694,16 @@ import lpips
 from torch.utils.data import DataLoader
 from torchvision import transforms
 
+
+def load_real_features_from_npz(npz_path: str) -> np.ndarray:
+    with np.load(npz_path) as f:
+        for k in ('act', ):
+            if k in f:
+                return f[k].astype(np.float32)
+    raise ValueError(
+        f"{npz_path} has no per-image features. "
+        f"Store them under key 'act' (see build_real_features_npz)."
+    )
 
 class Evaluator:
     def __init__(
@@ -772,63 +784,55 @@ class Evaluator:
 
     def calc_precision_recall(
         self,
+        device: str = "cuda",
         nearest_k: int = 5,
         dims: int = 2048,
         batch_size: int = 64,
         num_workers: int = 0,
-        max_real: int = 5000,
         max_fake: int = 5000,
         realism: bool = False,
         return_all: bool = False,
     ):
-        # 1) Build the same Inception head you already use for FID
+        # Inception head (same as FID)
         block_idx = InceptionV3.BLOCK_INDEX_BY_DIM[dims]
-        inc = InceptionV3([block_idx], resize_input=True, normalize_input=True).to(self.device).eval()
+        inc = InceptionV3([block_idx], resize_input=True, normalize_input=True).to(device).eval()
 
-        # 2) Real: load folder → tensor → activations (your get_activations)
-        real_samples = load_folder_as_tensor(
-            self.args.fewshotdataset,
-            batch_size=batch_size,
-            num_workers=num_workers,
-            max_images=max_real,
-        ).to(self.device)  # [N,3,H,W] in [0,1]
+        # ---- REAL: load per-image features from npz ----
+        # Prefer the FID npz if it already includes feats; otherwise point to a sibling e.g. ffhq_feats.npz
+        try:
+            real_feats = load_real_features_from_npz(self.fid_npz_path)  # [Nr, D] float32
+        except Exception:
+            # try "<base>_feats.npz"
+            base, ext = os.path.splitext(self.fid_npz_path)
+            feats_npz = base + "_feats.npz"
+            real_feats = load_real_features_from_npz(feats_npz)
 
-        real_feats = get_activations(
-            real_samples, inc, batch_size=batch_size, dims=dims,
-            device=self.device, num_workers=num_workers
-        ).astype(np.float32)  # [Nr, D], numpy
-
-        # 3) Fake: reuse your self.fake_images tensor
-        fake_samples = self.fake_images
+        # ---- FAKE: compute features from the generated tensor ----
+        fake = self.fake_images
         if max_fake is not None:
-            fake_samples = fake_samples[:max_fake]
+            fake = fake[:max_fake]
 
-        # Ensure [0,1] before Inception wrapper (it expects that)
-        if fake_samples.min() < 0:
-            fake_samples = (fake_samples + 1) / 2
+        if fake.min() < 0:   # ensure [0,1]
+            fake = (fake + 1) / 2
 
         fake_feats = get_activations(
-            fake_samples.to(self.device), inc, batch_size=batch_size, dims=dims,
-            device=self.device, num_workers=num_workers
-        ).astype(np.float32)  # [Nf, D], numpy
+            fake.to(device), inc, batch_size=batch_size, dims=dims,
+            device=device, num_workers=num_workers
+        ).astype(np.float32)
 
-        # (Optional) size-balance to keep pairwise matrix reasonable
-        if fake_feats.shape[0] > real_feats.shape[0]:
-            fake_feats = fake_feats[:real_feats.shape[0]]
+        # (Optional) size-balance to keep pairwise matrices manageable
+        n = min(len(real_feats), len(fake_feats))
+        real_feats = real_feats[:n]
+        fake_feats = fake_feats[:n]
 
-        # 4) Official PRDC
         prdc_out = compute_prdc(
             real_features=real_feats,
             fake_features=fake_feats,
             nearest_k=nearest_k,
             realism=realism
         )
+        return prdc_out if return_all else (float(prdc_out['precision']), float(prdc_out['recall']))
 
-        if return_all:
-            return prdc_out
-        else:
-            return float(prdc_out['precision']), float(prdc_out['recall'])
-            
 
 # -------------------- Precision and Recall --------------------
 """
@@ -943,37 +947,3 @@ def compute_prdc(real_features, fake_features, nearest_k, realism=False):
         ).max(axis=0)
 
     return d
-
-
-# ----------------- precision and recall util -----------------
-
-def load_folder_as_tensor(path, batch_size=32, num_workers=0, max_images=5000):
-    transform = transforms.Compose([transforms.ToTensor()])  # [0,1]
-
-    class _ImageFolderDataset(Dataset):
-        def __init__(self, folder, transform, max_images=None):
-            paths = sorted([
-                os.path.join(folder, fname)
-                for fname in os.listdir(folder)
-                if fname.lower().endswith((".jpg", ".jpeg", ".png", ".bmp", ".webp"))
-            ])
-            if len(paths) == 0:
-                raise ValueError(f"No images found under: {folder}")
-            if (max_images is not None) and (len(paths) > max_images):
-                paths = paths[:max_images]
-            self.paths = paths
-            self.transform = transform
-        def __len__(self): return len(self.paths)
-        def __getitem__(self, idx):
-            with Image.open(self.paths[idx]).convert("RGB") as img:
-                return self.transform(img)
-
-    dataset = _ImageFolderDataset(path, transform, max_images=max_images)
-    dl = DataLoader(dataset, batch_size=batch_size, num_workers=num_workers,
-                    shuffle=False, persistent_workers=False if num_workers == 0 else True,
-                    pin_memory=False, drop_last=False)
-
-    all_batches = []
-    for batch in dl:
-        all_batches.append(batch)
-    return torch.cat(all_batches, dim=0)  # [N,3,H,W] in [0,1]

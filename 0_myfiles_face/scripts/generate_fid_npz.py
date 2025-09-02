@@ -9,12 +9,12 @@ sys.path.append(PROJECT_ROOT)
 from main.dhariwal.evaluation_util import compute_statistics_of_path
 
 # Set path to your real dataset
-image_path = "/export/datasets/public/diffusion_datasets/adaptation/datasets/fid_folders/FFHQ/0/" 
+image_path = "/export/datasets/public/diffusion_datasets/adaptation/datasets/fid_folders/Metfaces1336_resized/" 
 
 # Compute Inception features (mean, covariance)
-mu, sigma = compute_statistics_of_path(image_path)
+mu, sigma, act = compute_statistics_of_path(image_path)
 
 # Save them into .npz file
-np.savez("/export/datasets/public/diffusion_datasets/adaptation/datasets/fid_npz/FFHQ.npz", mu=mu, sigma=sigma)
+np.savez("/export/datasets/public/diffusion_datasets/adaptation/datasets/fid_npz/metfaces.npz", mu=mu, sigma=sigma, act=act)
 
 print("Saved metfaces.npz successfully.")
