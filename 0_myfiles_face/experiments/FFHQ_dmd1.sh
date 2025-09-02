@@ -3,12 +3,14 @@ export WANDB_ENTITY="yara-mohammadi-bahram-1-ecole-superieure-de-technologie" # 
 export WANDB_PROJECT="DMD_face" # change this to your own wandb project
 export CUDA_VISIBLE_DEVICES=2,3
 
-
 # SRC="/export/datasets/public/diffusion_datasets/adaptation/datasets/targets/FFHQ_lmdb/"
 # DST="$PROJECT_PATH/datasets/10-shot/FFHQ_lmdb/"
 # mkdir -p "$DST"
+# rsync -avh --info=progress2 "$SRC" "$DST"
 
-# Copy everything, preserve perms/times, show progress
+# SRC="/export/datasets/public/diffusion_datasets/adaptation/checkpoints/ffhq.pt"
+# DST="$PROJECT_PATH/checkpoint_path/"
+# mkdir -p "$DST"
 # rsync -avh --info=progress2 "$SRC" "$DST"
 
 export MASTER_ADDR=127.0.0.1
@@ -17,10 +19,10 @@ export MASTER_PORT=$(shuf -i 20000-65000 -n 1)   # pick a random free port
 CUDA_VISIBLE_DEVICES=2,3 torchrun --nproc_per_node 2 --nnodes 1 --master_addr "$MASTER_ADDR" --master_port "$MASTER_PORT" main/dhariwal/train_dhariwal.py \
     --generator_lr 2e-6  \
     --guidance_lr 2e-6  \
-    --train_iters 10000000 \
-    --output_path $PROJECT_PATH/checkpoint_path/FFHQ256_dmd1 \
+    --train_iters 100000 \
+    --output_path /export/livia/home/vision/Ymohammadi/DMD2_checkpoints/FFHQ256_dmd1 \
     --batch_size 2 \
-    --initialie_generator --log_iters 500 \
+    --initialie_generator --log_iters 1000 \
     --resolution 256 \
     --label_dim 0 \
     --dataset_name "FFHQ" \
