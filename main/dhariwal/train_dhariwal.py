@@ -23,6 +23,8 @@ from pathlib import Path
 import shutil
 from collections import defaultdict
 
+torch.set_autocast_gpu_dtype(torch.bfloat16)
+
 class Trainer:
     def __init__(self, args):
 
@@ -119,6 +121,10 @@ class Trainer:
             real_dataset, batch_size=1, shuffle=True, 
             drop_last=True, num_workers=0
         )
+
+        self.model.feedforward_model.float()
+        self.model.guidance_model.float()
+
         real_image_dataloader = accelerator.prepare(real_image_dataloader)
         self.real_image_dataloader = cycle(real_image_dataloader)
             
@@ -340,64 +346,62 @@ class Trainer:
         #  Generator micro-step(s)
         # =========================
         with accelerator.accumulate(self.model.feedforward_model):
-            gen_loss_dict, gen_log_dict = self.model(
-                scaled_noise, timestep_sigma, labels,
-                real_train_dict=real_train_dict,
-                compute_generator_gradient=COMPUTE_GENERATOR_GRADIENT,
-                generator_turn=True, guidance_turn=False
-            )
+            with self.accelerator.autocast():  # <— important
+                gen_loss_dict, gen_log_dict = self.model(
+                    scaled_noise, timestep_sigma, labels,
+                    real_train_dict=real_train_dict,
+                    compute_generator_gradient=COMPUTE_GENERATOR_GRADIENT,
+                    generator_turn=True, guidance_turn=False
+                )
+                
+                if COMPUTE_GENERATOR_GRADIENT:
+                    generator_loss = self.dmd_loss_weight * gen_loss_dict["loss_dm"]
+                    if self.gan_classifier:
+                        generator_loss = generator_loss + gen_loss_dict["gen_cls_loss"] * self.gen_cls_loss_weight
 
-            if COMPUTE_GENERATOR_GRADIENT:
-                generator_loss = self.dmd_loss_weight * gen_loss_dict["loss_dm"]
-                if self.gan_classifier:
-                    generator_loss = generator_loss + gen_loss_dict["gen_cls_loss"] * self.gen_cls_loss_weight
+                    accelerator.backward(generator_loss)
 
-                accelerator.backward(generator_loss)
-
-                if accelerator.sync_gradients:
-                    if accelerator.mixed_precision == "fp16":
-                        generator_grad_norm = accelerator.clip_grad_norm_(self.model.feedforward_model.parameters(),
-                                                                        self.max_grad_norm)
-                    else:
+                    if accelerator.sync_gradients:
                         generator_grad_norm = torch.nn.utils.clip_grad_norm_(self.model.feedforward_model.parameters(),
-                                                                            self.max_grad_norm)
-                    self.optimizer_generator.step()
-                    # if we also compute gan loss, the classifier also received gradient 
-                    # zero out guidance model's gradient avoids undesired gradient accumulation
-                    self.optimizer_generator.zero_grad()
-                    self.optimizer_guidance.zero_grad()
-                    self.scheduler_generator.step()
-            else:
-                if accelerator.sync_gradients:
-                    self.scheduler_generator.step()
+                                                                                self.max_grad_norm)
+                        self.optimizer_generator.step()
+                        # if we also compute gan loss, the classifier also received gradient 
+                        # zero out guidance model's gradient avoids undesired gradient accumulation
+                        self.optimizer_generator.zero_grad()
+                        self.optimizer_guidance.zero_grad()
+                        self.scheduler_generator.step()
+                else:
+                    if accelerator.sync_gradients:
+                        self.scheduler_generator.step()
 
         # =========================
         #  Guidance micro-step(s)
         # =========================
         with accelerator.accumulate(self.model.guidance_model):
-            guid_loss_dict, guid_log_dict = self.model(
-                scaled_noise, timestep_sigma, labels,
-                real_train_dict=real_train_dict,
-                compute_generator_gradient=False,
-                generator_turn=False, guidance_turn=True,
-                guidance_data_dict=gen_log_dict.get('guidance_data_dict', None)
-            )
+            with accelerator.accumulate(self.model.feedforward_model):
+                guid_loss_dict, guid_log_dict = self.model(
+                    scaled_noise, timestep_sigma, labels,
+                    real_train_dict=real_train_dict,
+                    compute_generator_gradient=False,
+                    generator_turn=False, guidance_turn=True,
+                    guidance_data_dict=gen_log_dict.get('guidance_data_dict', None)
+                )
 
-            guidance_loss = guid_loss_dict["loss_fake_mean"]
-            if self.gan_classifier:
-                guidance_loss = guidance_loss + guid_loss_dict["guidance_cls_loss"] * self.cls_loss_weight
+                guidance_loss = guid_loss_dict["loss_fake_mean"]
+                if self.gan_classifier:
+                    guidance_loss = guidance_loss + guid_loss_dict["guidance_cls_loss"] * self.cls_loss_weight
 
-            accelerator.backward(guidance_loss)
+                accelerator.backward(guidance_loss)
 
-            if accelerator.sync_gradients:
-                guidance_grad_norm = accelerator.clip_grad_norm_(self.model.guidance_model.parameters(),
-                                                                self.max_grad_norm)
-                self.optimizer_guidance.step()
-                self.optimizer_guidance.zero_grad()
-                self.scheduler_guidance.step()
-                self.optimizer_generator.zero_grad()
-            else:
-                guidance_grad_norm = torch.tensor(0.0, device=accelerator.device)
+                if accelerator.sync_gradients:
+                    guidance_grad_norm = accelerator.clip_grad_norm_(self.model.guidance_model.parameters(),
+                                                                    self.max_grad_norm)
+                    self.optimizer_guidance.step()
+                    self.optimizer_guidance.zero_grad()
+                    self.scheduler_guidance.step()
+                    self.optimizer_generator.zero_grad()
+                else:
+                    guidance_grad_norm = torch.tensor(0.0, device=accelerator.device)
 
         # ---- merge logs (unchanged except small guards) ----
         loss_dict = {**gen_loss_dict, **guid_loss_dict}

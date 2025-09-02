@@ -20,7 +20,7 @@ CUDA_VISIBLE_DEVICES=2,3 torchrun --nproc_per_node 2 --nnodes 1 --master_addr "$
     --generator_lr 2e-6  \
     --guidance_lr 2e-6  \
     --train_iters 100000 \
-    --output_path /export/livia/home/vision/Ymohammadi/DMD2_checkpoints/FFHQ256_dmd1 \
+    --output_path /export/livia/home/vision/Ymohammadi/DMD2_checkpoints/FFHQ256_dmd1_bf16 \
     --batch_size 2 \
     --initialie_generator --log_iters 1000 \
     --resolution 256 \
@@ -31,7 +31,7 @@ CUDA_VISIBLE_DEVICES=2,3 torchrun --nproc_per_node 2 --nnodes 1 --master_addr "$
     --wandb_iters 100 \
     --wandb_entity $WANDB_ENTITY \
     --wandb_project $WANDB_PROJECT \
-    --wandb_name "FFHQ_DMD1"   \
+    --wandb_name "FFHQ_DMD1_bf16"   \
     --real_image_path 0_myfiles_face/datasets/FFHQ_lmdb \
     --dfake_gen_update_ratio 5 \
     --cls_loss_weight 1e-2 \
@@ -41,5 +41,6 @@ CUDA_VISIBLE_DEVICES=2,3 torchrun --nproc_per_node 2 --nnodes 1 --master_addr "$
     --diffusion_gan \
     --diffusion_gan_max_timestep 1000 \
     --delete_ckpts \
-    --max_checkpoint 100 
+    --max_checkpoint 100 \
+    --use_fp16
 
