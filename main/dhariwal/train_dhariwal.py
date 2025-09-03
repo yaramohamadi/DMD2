@@ -569,32 +569,35 @@ class Trainer:
                         prf = batched.get("pred_realism_on_fake", None)
                         prr = batched.get("pred_realism_on_real", None)
                         if (prf is not None) and (prr is not None):
-                            hist_pred_realism_on_fake = draw_probability_histogram(prf.detach().cpu().numpy())
-                            hist_pred_realism_on_real = draw_probability_histogram(prr.detach().cpu().numpy())
+                            # 1) true W&B histograms (interactive)
+                            prf_np = prf.detach().flatten().float().cpu().numpy()
+                            prr_np = prr.detach().flatten().float().cpu().numpy()
                             data_dict.update({
-                                "hist_pred_realism_on_fake": wandb.Image(hist_pred_realism_on_fake),
-                                "hist_pred_realism_on_real": wandb.Image(hist_pred_realism_on_real),
-                                "pred_realism_on_fake_mean": float(prf.mean().item()),
-                                "pred_realism_on_real_mean": float(prr.mean().item()),
+                                "hist/pred_realism_on_fake": wandb.Histogram(prf_np, num_bins=50),
+                                "hist/pred_realism_on_real": wandb.Histogram(prr_np, num_bins=50),
+                                "pred_realism_on_fake_mean": float(prf_np.mean()),
+                                "pred_realism_on_real_mean": float(prr_np.mean()),
+                            })
+
+                            # 2) (optional) keep your rendered histogram image too
+                            hist_fake_img = draw_probability_histogram(prf_np)
+                            hist_real_img = draw_probability_histogram(prr_np)
+                            data_dict.update({
+                                "hist_img/pred_realism_on_fake": wandb.Image(hist_fake_img),
+                                "hist_img/pred_realism_on_real": wandb.Image(hist_real_img),
                             })
 
                         cf = batched.get("critic_fake", None)
                         cr = batched.get("critic_real", None)
                         if (cf is not None) and (cr is not None):
+                            cf_sig_np = torch.sigmoid(cf).detach().flatten().cpu().numpy()
+                            cr_sig_np = torch.sigmoid(cr).detach().flatten().cpu().numpy()
                             data_dict.update({
-                                "critic_fake_mean": float(cf.mean().item()),
-                                "critic_real_mean": float(cr.mean().item()),
+                                "hist/critic_fake_sigmoid": wandb.Histogram(cf_sig_np, num_bins=50),
+                                "hist/critic_real_sigmoid": wandb.Histogram(cr_sig_np, num_bins=50),
                             })
-                            cf_sig = torch.sigmoid(cf)
-                            cr_sig = torch.sigmoid(cr)
-                            hist_cf = draw_probability_histogram(cf_sig.detach().cpu().numpy())
-                            hist_cr = draw_probability_histogram(cr_sig.detach().cpu().numpy())
-                            data_dict.update({
-                                "hist_critic_fake_sigmoid": wandb.Image(hist_cf),
-                                "hist_critic_real_sigmoid": wandb.Image(hist_cr),
-                            })
-                            if 'wgan_gp' in scalar_means:
-                                data_dict['wgan_gp'] = float(scalar_means['wgan_gp'])
+                                if 'wgan_gp' in scalar_means:
+                                    data_dict['wgan_gp'] = float(scalar_means['wgan_gp'])
 
                     # Use accelerator.log so only rank 0 logs to WandB
                     wandb.log(data_dict, step=self.global_step)
