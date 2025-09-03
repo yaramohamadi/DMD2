@@ -29,56 +29,81 @@ from argparse import Namespace
 from main.dhariwal.evaluation_util import Evaluator
 
 
+
 # Helpers for saving best checkpoints ---------------------------------
+BEST_META_NAME = "best_ckpt.json"          # metadata file
+BEST_DIR_NAME  = "checkpoint_best"         # stable directory name
+BEST_LOCK_NAME = ".BEST_LOCK"              # simple file lock
 
-BEST_META = "best.json"
-BEST_LOCK = ".BEST_LOCK"
+def _best_paths(root: Path):
+    root = Path(root)
+    return (root / BEST_DIR_NAME, root / BEST_META_NAME, root / BEST_LOCK_NAME)
 
-def read_best_meta(root: Path):
-    p = root / BEST_META
-    if p.exists():
+def read_best_meta(root: Path) -> dict:
+    _, meta_p, _ = _best_paths(root)
+    if meta_p.exists():
         try:
-            with open(p, "r") as f:
+            with open(meta_p, "r") as f:
                 return json.load(f)
         except Exception:
             pass
-    return {"fid": float("inf"), "iteration": -1, "src": None, "dst": None}
+    return {"fid": float("inf"), "iteration": -1, "src": None, "dst": None, "timestamp": None}
 
-def write_best_meta(root: Path, payload: dict):
-    tmp = root / (BEST_META + ".tmp")
+def write_best_meta(root: Path, meta: dict) -> None:
+    _, meta_p, _ = _best_paths(root)
+    tmp = meta_p.with_suffix(".tmp")
     with open(tmp, "w") as f:
-        json.dump(payload, f, indent=2)
-    os.replace(tmp, root / BEST_META)  # atomic rename
+        json.dump(meta, f, indent=2)
+    os.replace(tmp, meta_p)
 
 @contextmanager
 def best_lock(root: Path):
-    lock_path = root / BEST_LOCK
+    _, _, lock_p = _best_paths(root)
+    # exclusive create; if taken, just raise so caller skips
     fd = None
     try:
-        fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_RDWR)
+        fd = os.open(str(lock_p), os.O_CREAT | os.O_EXCL | os.O_RDWR)
         yield
     finally:
         if fd is not None:
             os.close(fd)
         try:
-            lock_path.unlink(missing_ok=True)
-        except Exception:
+            os.remove(lock_p)
+        except OSError:
             pass
 
-def copy_checkpoint_as_best(src_dir: Path, dst_root: Path, iteration: int, fid: float) -> Path:
-    name = f"checkpoint_best_model_iteration_{iteration:06d}_FID_{fid:.4f}"
-    dst = dst_root / name
-    # Ensure unique folder if it somehow already exists
-    suf = 1
-    dst_final = dst
-    while dst_final.exists():
-        suf += 1
-        dst_final = dst_root / f"{name}_{suf}"
-    # Don’t copy ephemeral eval lock files
-    def _ignore(dir, names):
-        return {".EVAL_LOCK"} if ".EVAL_LOCK" in names else set()
-    copytree(src_dir, dst_final, dirs_exist_ok=False, ignore=_ignore)
-    return dst_final
+def copy_checkpoint_as_best(src_ckpt_dir: Path, root: Path, iteration: int, fid_value: float, mode: str = "copy") -> Path:
+    """
+    Copy/symlink the entire checkpoint folder to <root>/checkpoint_best atomically.
+    mode='copy' (default) physically copies; mode='link' makes a symlink.
+    Returns the destination Path.
+    """
+    dst_dir, _, _ = _best_paths(root)
+    dst_dir = Path(dst_dir)
+    tmp = dst_dir.with_suffix(".tmp")
+
+    if mode == "link":
+        # symlink update (zero extra disk)
+        if tmp.exists() or tmp.is_symlink():
+            try: tmp.unlink()
+            except OSError: shutil.rmtree(tmp, ignore_errors=True)
+        os.symlink(src_ckpt_dir, tmp)
+        os.replace(tmp, dst_dir)   # atomic swap
+    else:
+        # physical copy (safe atomic swap)
+        shutil.rmtree(tmp, ignore_errors=True)
+        shutil.copytree(src_ckpt_dir, tmp)
+        os.replace(tmp, dst_dir)   # atomic swap
+
+    # also drop a small marker file inside best dir (optional)
+    try:
+        with open(dst_dir / ".BEST_INFO", "w") as f:
+            f.write(f"iteration={iteration}\nfid={fid_value:.6f}\nsrc={src_ckpt_dir}\n")
+    except Exception:
+        pass
+
+    return dst_dir
+# ----------------------------------------------------------------------
 
 # --------------------------------------------------------------------
 

@@ -16,6 +16,7 @@ import json
 import time 
 import os 
 
+
 def get_imagenet_config():
     base_config = {
         "img_resolution": 64,
