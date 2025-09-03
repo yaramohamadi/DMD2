@@ -596,8 +596,8 @@ class Trainer:
                                 "hist/critic_fake_sigmoid": wandb.Histogram(cf_sig_np, num_bins=50),
                                 "hist/critic_real_sigmoid": wandb.Histogram(cr_sig_np, num_bins=50),
                             })
-                                if 'wgan_gp' in scalar_means:
-                                    data_dict['wgan_gp'] = float(scalar_means['wgan_gp'])
+                            if 'wgan_gp' in scalar_means:
+                                data_dict['wgan_gp'] = float(scalar_means['wgan_gp'])
 
                     # Use accelerator.log so only rank 0 logs to WandB
                     wandb.log(data_dict, step=self.global_step)

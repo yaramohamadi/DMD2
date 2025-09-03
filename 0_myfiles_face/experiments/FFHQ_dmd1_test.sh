@@ -23,7 +23,7 @@ python -u main/dhariwal/test_folder_dhariwal.py \
   --category $CATEGORY \
   --resolution 256 \
   --label_dim 0 \
-  --eval_batch_size 12 \
+  --eval_batch_size 4 \
   --total_eval_samples 5000 \
   --conditioning_sigma 80.0 \
   --lpips_cluster_size 100 \
