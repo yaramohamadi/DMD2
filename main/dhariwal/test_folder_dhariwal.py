@@ -21,11 +21,67 @@ import os
 from pathlib import Path
 import math
 from PIL import Image
-
+import shutil
+from shutil import copytree
+from contextlib import contextmanager
 from main.dhariwal.dhariwal_network import get_edm_network  # this builds DhariwalUNetAdapter
-# NEW: baseline evaluators
 from argparse import Namespace
 from main.dhariwal.evaluation_util import Evaluator
+
+
+# Helpers for saving best checkpoints ---------------------------------
+
+BEST_META = "best.json"
+BEST_LOCK = ".BEST_LOCK"
+
+def read_best_meta(root: Path):
+    p = root / BEST_META
+    if p.exists():
+        try:
+            with open(p, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {"fid": float("inf"), "iteration": -1, "src": None, "dst": None}
+
+def write_best_meta(root: Path, payload: dict):
+    tmp = root / (BEST_META + ".tmp")
+    with open(tmp, "w") as f:
+        json.dump(payload, f, indent=2)
+    os.replace(tmp, root / BEST_META)  # atomic rename
+
+@contextmanager
+def best_lock(root: Path):
+    lock_path = root / BEST_LOCK
+    fd = None
+    try:
+        fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_RDWR)
+        yield
+    finally:
+        if fd is not None:
+            os.close(fd)
+        try:
+            lock_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+def copy_checkpoint_as_best(src_dir: Path, dst_root: Path, iteration: int, fid: float) -> Path:
+    name = f"checkpoint_best_model_iteration_{iteration:06d}_FID_{fid:.4f}"
+    dst = dst_root / name
+    # Ensure unique folder if it somehow already exists
+    suf = 1
+    dst_final = dst
+    while dst_final.exists():
+        suf += 1
+        dst_final = dst_root / f"{name}_{suf}"
+    # Don’t copy ephemeral eval lock files
+    def _ignore(dir, names):
+        return {".EVAL_LOCK"} if ".EVAL_LOCK" in names else set()
+    copytree(src_dir, dst_final, dirs_exist_ok=False, ignore=_ignore)
+    return dst_final
+
+# --------------------------------------------------------------------
+
 
 
 def is_checkpoint_ready(ckpt_dir: Path) -> bool:
@@ -140,8 +196,8 @@ def sample(accelerator, current_model, args, model_index):
         noise = torch.randn(cur, 3, args.resolution, args.resolution, device=dev)
 
         # Mixed precision speeds up inference a lot and is safe for sampling/feature extraction
-        # with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-        imgs = current_model(noise * args.conditioning_sigma, t, const_label_zero(cur))  # [-1,1], NCHW
+        with accelerator.autocast(): 
+            imgs = current_model(noise * args.conditioning_sigma, t, const_label_zero(cur))  # [-1,1], NCHW
 
         imgs_u8 = ((imgs + 1.0) * 127.5).clamp(0, 255).to(torch.uint8)     # NCHW
         imgs_u8 = imgs_u8.permute(0, 2, 3, 1).contiguous()                  # NHWC
@@ -198,6 +254,7 @@ def evaluate():
     parser.add_argument("--lpips_cluster_size", type=int, default=100, help="Cluster size for intra-LPIPS")
     parser.add_argument("--fewshotdataset", type=str, default="", help="Path to few-shot dataset (intra-LPIPS eval)")
     parser.add_argument("--no_lpips", action="store_true", help="Disable LPIPS computation to save time")
+    parser.add_argument("--use_fp16", action="store_true", help="Use bf16 for inference (if supported by GPU/driver)")
 
     args = parser.parse_args()
 
@@ -208,7 +265,7 @@ def evaluate():
     accelerator_project_config = ProjectConfiguration(logging_dir=args.folder)
     accelerator = Accelerator(
         gradient_accumulation_steps=1,
-        mixed_precision="no",
+        mixed_precision="bf16" if args.use_fp16 else "no",
         log_with="wandb",
         project_config=accelerator_project_config
     )
@@ -236,7 +293,7 @@ def evaluate():
 
     while True:
         # only directories named 'checkpoint_*'
-        new_ckpts = sorted(p for p in Path(folder).glob("checkpoint_*") if p.is_dir())
+        new_ckpts = sorted(p for p in Path(folder).glob("checkpoint_model_*") if p.is_dir())
         new_ckpts = [str(p) for p in new_ckpts if str(p) not in evaluated_checkpoints]
         if not new_ckpts:
             time.sleep(3.0)
@@ -266,25 +323,26 @@ def evaluate():
                 continue
 
             try:
-                # generator = create_generator(
-                #     str(ckpt_path / "pytorch_model.bin"),
-                #     base_model=generator
-                # ).to(accelerator.device)
+                generator = create_generator(
+                    str(ckpt_path / "pytorch_model.bin"),
+                    base_model=generator
+                ).to(accelerator.device)
 # 
-                # all_images_tensor = sample(accelerator, generator, args, model_index)
+                all_images_tensor = sample(accelerator, generator, args, model_index)
 
-                # TMP TODO: save numpy for inspection
-                tmp_npy = os.path.join(folder, f"_tmp_imgs_{model_index:06d}.npy")
+                #TMP TODO: save numpy for inspection
+                # tmp_npy = os.path.join(folder, f"_tmp_imgs_{model_index:06d}.npy")
                 # print('saving', tmp_npy)
                 # np.save(tmp_npy, all_images_tensor.numpy())
                 # print('saved', tmp_npy)
                 # exit()
-
+                # TMP TODO: load numpy for testing
                 # Reload mem-mapped to keep RAM down (zero-copy into torch via from_numpy)
-                print('loading', tmp_npy)
-                imgs_memmap = np.load(tmp_npy, mmap_mode='r')   # dtype=uint8, shape [N, H, W, 3]
-                all_images_tensor = torch.from_numpy(imgs_memmap)  # still NHWC uint8, CPU
+                #print('loading', tmp_npy)
+                #imgs_memmap = np.load(tmp_npy, mmap_mode='r')   # dtype=uint8, shape [N, H, W, 3]
+                # all_images_tensor = torch.from_numpy(imgs_memmap)  # still NHWC uint8, CPU
 
+                # TMP TODO: save locally an optional grid --------------------------
                 # build a preview grid with an auto grid size (near-square)
                 n = all_images_tensor.size(0)
                 g = int(np.floor(np.sqrt(min(100, n))))  # cap grid to 100 cells
@@ -297,8 +355,7 @@ def evaluate():
 
                 # ensure C-contiguous uint8 for PIL
                 Image.fromarray(np.ascontiguousarray(grid)).save(grid_path)
-
-                exit()
+                # ------------------------------------------------------------------
 
                 imgs_nchw_f01 = all_images_tensor.permute(0, 3, 1, 2).to(torch.float32) / 255.0
 
@@ -317,6 +374,24 @@ def evaluate():
                 if accelerator.is_main_process:
                     evaluator = Evaluator(eval_args, imgs_nchw_f01, ref_npz_path, args.lpips_cluster_size)
                     fid_score = evaluator.calc_fid()
+
+                    # Save best model if needed
+                    if accelerator.is_main_process:
+                        with best_lock(Path(folder)):
+                            best = read_best_meta(Path(folder))
+                            current_fid = float(fid_score)
+                            if np.isfinite(current_fid) and (current_fid < float(best.get("fid", float("inf")))):
+                                dst_path = copy_checkpoint_as_best(ckpt_path, Path(folder), model_index, current_fid)
+                                new_best = {
+                                    "fid": current_fid,
+                                    "iteration": int(model_index),
+                                    "src": str(ckpt_path),
+                                    "dst": str(dst_path),
+                                    "timestamp": time.time(),
+                                }
+                                write_best_meta(Path(folder), new_best)
+                                print(f"[BEST] New best FID {current_fid:.4f} at iter {model_index}. Saved to: {dst_path}")
+
                     prec, rec = evaluator.calc_precision_recall(nearest_k=5)
                     if args.no_lpips:
                         intra_lpips = -1.0

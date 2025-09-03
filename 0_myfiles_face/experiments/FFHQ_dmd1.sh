@@ -22,7 +22,7 @@ CUDA_VISIBLE_DEVICES=2,3 torchrun --nproc_per_node 2 --nnodes 1 --master_addr "$
     --train_iters 100000 \
     --output_path /export/livia/home/vision/Ymohammadi/DMD2_checkpoints/FFHQ256_dmd1_bf16 \
     --batch_size 2 \
-    --initialie_generator --log_iters 1000 \
+    --initialie_generator --log_iters 500 \
     --resolution 256 \
     --label_dim 0 \
     --dataset_name "FFHQ" \

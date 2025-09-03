@@ -15,7 +15,7 @@ export CUDA_VISIBLE_DEVICES=3
 # /export/livia/home/vision/Ymohammadi/DMD2_checkpoints/FFHQ256_dmd1/time_1756780684_seed10/
 
 python -u main/dhariwal/test_folder_dhariwal.py \
-  --folder  /export/livia/home/vision/Ymohammadi/DMD2_checkpoints/tmp\
+  --folder /export/livia/home/vision/Ymohammadi/DMD2_checkpoints/FFHQ256_dmd1_bf16/time_1756860369_seed10/\
   --wandb_name FFHQ_dmd1_test \
   --wandb_entity $WANDB_ENTITY \
   --wandb_project $WANDB_PROJECT \
@@ -23,9 +23,10 @@ python -u main/dhariwal/test_folder_dhariwal.py \
   --category $CATEGORY \
   --resolution 256 \
   --label_dim 0 \
-  --eval_batch_size 32 \
+  --eval_batch_size 12 \
   --total_eval_samples 5000 \
   --conditioning_sigma 80.0 \
   --lpips_cluster_size 100 \
   --fewshotdataset $PROJECT_PATH/datasets/10-shot/babies/0 \
-  --no_lpips
+  --no_lpips \
+  --use_fp16
