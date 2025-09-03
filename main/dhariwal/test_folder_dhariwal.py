@@ -148,7 +148,7 @@ def create_generator(checkpoint_path, base_model=None):
             resolution=256,
             img_channels=3,
             label_dim=0,          # unconditional FFHQ
-            use_fp16=False,
+            use_fp16=args.use_fp16,  # True/False
             model_type="DhariwalUNet",
             model_id=None,        # your builder prints a warning if this is None
             # include any other fields your get_edm_network reads; unused ones are fine
@@ -222,9 +222,7 @@ def sample(accelerator, current_model, args, model_index):
 
         noise = torch.randn(cur, 3, args.resolution, args.resolution, device=dev)
 
-        # Mixed precision speeds up inference a lot and is safe for sampling/feature extraction
-        with accelerator.autocast(): 
-            imgs = current_model(noise * args.conditioning_sigma, t, const_label_zero(cur))  # [-1,1], NCHW
+        imgs = current_model(noise * args.conditioning_sigma, t, const_label_zero(cur))  # [-1,1], NCHW
 
         imgs_u8 = ((imgs + 1.0) * 127.5).clamp(0, 255).to(torch.uint8)     # NCHW
         imgs_u8 = imgs_u8.permute(0, 2, 3, 1).contiguous()                  # NHWC
@@ -292,7 +290,7 @@ def evaluate():
     accelerator_project_config = ProjectConfiguration(logging_dir=args.folder)
     accelerator = Accelerator(
         gradient_accumulation_steps=1,
-        mixed_precision="bf16" if args.use_fp16 else "no",
+        mixed_precision="no",
         log_with="wandb",
         project_config=accelerator_project_config
     )

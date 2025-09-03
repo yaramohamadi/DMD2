@@ -32,7 +32,7 @@ class Trainer:
         ddp = DistributedDataParallelKwargs(find_unused_parameters=True) # add this for discriminator head only training
         accelerator = Accelerator(
             gradient_accumulation_steps=1, # no accumulation
-            mixed_precision="bf16",
+            mixed_precision="no",
             log_with="wandb",
             project_config=accelerator_project_config,
             kwargs_handlers=[ddp],   # <— add this for discriminator head only training

@@ -6,7 +6,6 @@ import pickle
 import torch
 import copy 
 
-
 # utils
 def _avg_spatial(x):
     return x.mean(dim=(2,3), keepdim=False) if x.ndim == 4 else x  # [B,1,H,W]→[B,1]
@@ -85,6 +84,8 @@ class dhariwalGuidance(nn.Module):
         self.fake_unet = self.fake_unet.to(accelerator.device)          
         self.fake_unet.requires_grad_(True)
 
+        param = next(self.fake_unet.parameters())
+
         # some training hyper-parameters 
         self.sigma_data = args.sigma_data
         self.sigma_max = args.sigma_max
@@ -102,11 +103,7 @@ class dhariwalGuidance(nn.Module):
             # unconditional => label None; conditional => pass a 1-hot of shape [1, label_dim]
             dummy_label = None if args.label_dim == 0 else torch.zeros(1, args.label_dim, device=accelerator.device)
 
-            if accelerator.mixed_precision == "bf16":
-                with torch.autocast("cuda", dtype=torch.bfloat16):
-                    feat = self.fake_unet(dummy_x, dummy_sigma, dummy_label, return_bottleneck=True)
-            else:
-                feat = self.fake_unet(dummy_x, dummy_sigma, dummy_label, return_bottleneck=True)
+            feat = self.fake_unet(dummy_x, dummy_sigma, dummy_label, return_bottleneck=True)
 
             bottleneck_c = feat.shape[1]
 

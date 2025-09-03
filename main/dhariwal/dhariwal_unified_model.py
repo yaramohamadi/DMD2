@@ -7,7 +7,6 @@ import copy
 class dhariwalUniModel(nn.Module):
     def __init__(self, args, accelerator):
         super().__init__()
-        args.use_fp16 = False
         self.guidance_model = dhariwalGuidance(args, accelerator) 
 
         self.guidance_min_step = self.guidance_model.min_step

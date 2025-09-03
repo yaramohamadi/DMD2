@@ -58,7 +58,7 @@ class DhariwalUNetAdapter(nn.Module):
                 noise_schedule="linear",
                 diffusion_steps=1000,
                 learn_sigma=True, # not used, but keep consistent with DhariwalGuidance
-                use_fp16=False,
+                use_fp16=use_fp16,
                 num_head_channels=64,
                 num_res_blocks=2,
                 resblock_updown=True,
@@ -69,9 +69,6 @@ class DhariwalUNetAdapter(nn.Module):
 
         self._feat_buf = {}
         self._feat_hooks = {}
-
-        #if use_fp16:
-        #    self.unet.convert_to_fp16()
 
         acp = self.diffusion.alphas_cumprod
         if not torch.is_tensor(acp):
@@ -237,15 +234,10 @@ def get_edm_network(args):
     """
     Build the Dhariwal (ADM) UNet wrapped to look like EDMPrecond.
     """
-    args.use_fp16 = False
     class_cond = (args.label_dim or 0) > 0
     net = DhariwalUNetAdapter(
         image_size=args.resolution,      # 256 for FFHQ
         class_cond=class_cond,           # False for unconditional FFHQ
-        use_fp16=False,
+        use_fp16=args.use_fp16,         # True/False
     )
-    if getattr(args, "model_id", None):
-        net = load_pt_with_logs(net, args.model_id)
-    else:
-        print("[get_edm_network] Warning: args.model_id not provided; using random init.")
     return net

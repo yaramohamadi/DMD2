@@ -23,8 +23,6 @@ from pathlib import Path
 import shutil
 from collections import defaultdict
 
-torch.set_autocast_gpu_dtype(torch.bfloat16)
-
 class Trainer:
     def __init__(self, args):
 
@@ -37,7 +35,7 @@ class Trainer:
 
         accelerator = Accelerator(
             gradient_accumulation_steps=args.grad_accum_steps,
-            mixed_precision="bf16" if args.use_fp16 else "no",
+            mixed_precision="no",
             log_with="wandb",
             project_config=accelerator_project_config,
             kwargs_handlers=None
@@ -121,9 +119,6 @@ class Trainer:
             real_dataset, batch_size=args.batch_size, shuffle=True, 
             drop_last=True, num_workers=0
         )
-
-        self.model.feedforward_model.float()
-        self.model.guidance_model.float()
 
         real_image_dataloader = accelerator.prepare(real_image_dataloader)
         self.real_image_dataloader = cycle(real_image_dataloader)
@@ -346,7 +341,6 @@ class Trainer:
         #  Generator micro-step(s)
         # =========================
         with accelerator.accumulate(self.model.feedforward_model):
-            with self.accelerator.autocast():  # <— important
                 gen_loss_dict, gen_log_dict = self.model(
                     scaled_noise, timestep_sigma, labels,
                     real_train_dict=real_train_dict,
@@ -378,7 +372,6 @@ class Trainer:
         #  Guidance micro-step(s)
         # =========================
         with accelerator.accumulate(self.model.guidance_model):
-            with self.accelerator.autocast():  # <— important
                 guid_loss_dict, guid_log_dict = self.model(
                     scaled_noise, timestep_sigma, labels,
                     real_train_dict=real_train_dict,
