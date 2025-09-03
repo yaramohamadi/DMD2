@@ -1,7 +1,7 @@
 export PROJECT_PATH="0_myfiles_face" # change this to your own checkpoint folder 
 export WANDB_ENTITY="yara-mohammadi-bahram-1-ecole-superieure-de-technologie" # change this to your own wandb entity
 export WANDB_PROJECT="DMD_face" # change this to your own wandb project
-export CUDA_VISIBLE_DEVICES=2,3
+export CUDA_VISIBLE_DEVICES=1,3
 
 # SRC="/export/datasets/public/diffusion_datasets/adaptation/datasets/targets/FFHQ_lmdb/"
 # DST="$PROJECT_PATH/datasets/10-shot/FFHQ_lmdb/"
@@ -16,11 +16,11 @@ export CUDA_VISIBLE_DEVICES=2,3
 export MASTER_ADDR=127.0.0.1
 export MASTER_PORT=$(shuf -i 20000-65000 -n 1)   # pick a random free port
 
-CUDA_VISIBLE_DEVICES=2,3 torchrun --nproc_per_node 2 --nnodes 1 --master_addr "$MASTER_ADDR" --master_port "$MASTER_PORT" main/dhariwal/train_dhariwal.py \
+CUDA_VISIBLE_DEVICES=1,3 torchrun --nproc_per_node 2 --nnodes 1 --master_addr "$MASTER_ADDR" --master_port "$MASTER_PORT" main/dhariwal/train_dhariwal.py \
     --generator_lr 2e-6  \
     --guidance_lr 2e-6  \
-    --train_iters 100000 \
-    --output_path /export/livia/home/vision/Ymohammadi/DMD2_checkpoints/FFHQ256_dmd1_bf16 \
+    --train_iters 50000 \
+    --output_path /export/livia/home/vision/Ymohammadi/DMD2_checkpoints/FFHQ256_dmd1_bf16_bugfixes \
     --batch_size 2 \
     --initialie_generator --log_iters 500 \
     --resolution 256 \

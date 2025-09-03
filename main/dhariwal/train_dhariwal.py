@@ -118,7 +118,7 @@ class Trainer:
         real_dataset = LMDBDataset(args.real_image_path, transform=real_transform)
 
         real_image_dataloader = torch.utils.data.DataLoader(
-            real_dataset, batch_size=1, shuffle=True, 
+            real_dataset, batch_size=args.batch_size, shuffle=True, 
             drop_last=True, num_workers=0
         )
 
@@ -378,7 +378,7 @@ class Trainer:
         #  Guidance micro-step(s)
         # =========================
         with accelerator.accumulate(self.model.guidance_model):
-            with accelerator.accumulate(self.model.feedforward_model):
+            with self.accelerator.autocast():  # <— important
                 guid_loss_dict, guid_log_dict = self.model(
                     scaled_noise, timestep_sigma, labels,
                     real_train_dict=real_train_dict,

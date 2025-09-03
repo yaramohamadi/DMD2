@@ -131,6 +131,7 @@ def try_eval_lock(ckpt_dir: Path) -> bool:
         os.close(fd)
         return True
     except FileExistsError:
+        print(f"Checkpoint {ckpt_dir} is already being evaluated by another process.")
         return False
 
 def release_eval_lock(ckpt_dir: Path):
@@ -200,6 +201,7 @@ def sample(accelerator, current_model, args, model_index):
     m = getattr(current_model, "module", current_model)
     Lm = getattr(m, "label_dim", 0)
     current_model.eval()
+    current_model.float()
 
     def const_label_zero(B):
         if Lm == 0:
