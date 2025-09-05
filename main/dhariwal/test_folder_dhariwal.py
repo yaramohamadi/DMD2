@@ -9,7 +9,6 @@ from accelerate import Accelerator
 from tqdm import tqdm
 import numpy as np
 import argparse
-import dnnlib
 import pickle
 import wandb
 import torch
@@ -148,7 +147,7 @@ def create_generator(checkpoint_path, base_model=None):
             resolution=256,
             img_channels=3,
             label_dim=0,          # unconditional FFHQ
-            use_fp16=args.use_fp16,  # True/False
+            use_fp16=False,  # True/False
             model_type="DhariwalUNet",
             model_id=None,        # your builder prints a warning if this is None
             # include any other fields your get_edm_network reads; unused ones are fine

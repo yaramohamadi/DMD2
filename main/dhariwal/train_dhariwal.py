@@ -35,7 +35,7 @@ class Trainer:
 
         accelerator = Accelerator(
             gradient_accumulation_steps=args.grad_accum_steps,
-            mixed_precision="no",
+            mixed_precision="bf16" if args.use_bf16 else "no",
             log_with="wandb",
             project_config=accelerator_project_config,
             kwargs_handlers=None
@@ -666,6 +666,13 @@ def parse_args():
         help='>0 enables WGAN-GP with this lambda (e.g., 10.0).')
     parser.add_argument("--grad_accum_steps", type=int, default=1,
         help="Gradient accumulation steps for larger effective batch sizes.")
+    parser.add_argument("--denoising", action="store_true",
+        help="Enable few-step K-step generator unroll")
+    parser.add_argument("--num_denoising_step", type=int, default=1,
+        help="K steps for the generator (e.g., 2–4)")
+    parser.add_argument("--denoising_sigma_end", type=float, default=0.5,
+        help="Final (smallest) sigma for the unroll")
+    parser.add_argument("--use_bf16", action="store_true")
     # -----------------------------------------------------------
 
     args = parser.parse_args()
