@@ -9,10 +9,8 @@ lmdb
 transformers 
 accelerate==0.23.0 
 lmdb 
-datasets 
 evaluate  
 scipy 
-opencv-python 
 matplotlib 
 imageio 
 piq==0.7.0 
