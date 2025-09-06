@@ -1,1 +1,8 @@
 ba92302c6697076e3cf1b76fb6c11b5ded29fa54
+37efdaf78afc776eece6c9207e21caaff0ede2c3
+
+wandb whoami
+
+export WANDB_ENTITY='yara-mohammadi-bahram-1-ecole-superieure-de-technologie'
+
+https://wandb.ai/yara-mohammadi-bahram-1-ecole-superieure-de-technologie
