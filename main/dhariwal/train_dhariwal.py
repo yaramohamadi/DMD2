@@ -56,8 +56,8 @@ class Trainer:
             else:
                 # fresh run
                 self.run_id = int(time.time())
-                output_path = args.output_path
-                os.makedirs(output_path, exist_ok=False)
+                output_path = os.path.join(args.output_path)
+                os.makedirs(output_path, exist_ok=True)
                 self.output_path = output_path
 
             if args.cache_dir != "":
@@ -348,10 +348,6 @@ class Trainer:
                     compute_generator_gradient=COMPUTE_GENERATOR_GRADIENT,
                     generator_turn=True, guidance_turn=False
                 )
-
-                print('Feed forward generator model')
-                print(gen_loss_dict.keys())
-                print(gen_log_dict.keys())
                 
                 if COMPUTE_GENERATOR_GRADIENT:
                     generator_loss = self.dmd_loss_weight * gen_loss_dict["loss_dm"]
@@ -384,11 +380,7 @@ class Trainer:
                     generator_turn=False, guidance_turn=True,
                     guidance_data_dict=gen_log_dict.get('guidance_data_dict', None)
                 )
-
-                print('Feed forward guidance model')
-                print(guid_loss_dict.keys())
-                print(guid_log_dict.keys())
-
+                
                 guidance_loss = guid_loss_dict["loss_fake_mean"]
                 if self.gan_classifier:
                     guidance_loss = guidance_loss + guid_loss_dict["guidance_cls_loss"] * self.cls_loss_weight

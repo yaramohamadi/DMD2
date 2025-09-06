@@ -1,49 +1,91 @@
-export PROJECT_PATH="0_myfiles_face" # change this to your own checkpoint folder 
-export WANDB_ENTITY="yara-mohammadi-bahram-1-ecole-superieure-de-technologie" # change this to your own wandb entity
-export WANDB_PROJECT="DMD_face" # change this to your own wandb project
-export CUDA_VISIBLE_DEVICES=3
+#!/bin/bash
 
+############################
+# User Configurations
+############################
+
+# Project paths
+EXPERIMENT_NAME="FFHQ_dmd1_fewstep"
+PROJECT_PATH="0_myfiles_face"
+CHECKPOINT_INIT="$PROJECT_PATH/checkpoint_path/ffhq.pt"
+REAL_IMAGE_PATH="$PROJECT_PATH/datasets/FFHQ_lmdb"
+OUTPUT_PATH="$PROJECT_PATH/checkpoint_path/$EXPERIMENT_NAME/"
+
+
+# Weights & Biases (W&B) tracking
+WANDB_ENTITY="yara-mohammadi-bahram-1-ecole-superieure-de-technologie"
+WANDB_PROJECT="DMD_face"
+WANDB_NAME="$EXPERIMENT_NAME"
+
+# Training parameters
+GENERATOR_LR=2e-6
+GUIDANCE_LR=2e-6
+BATCH_SIZE=1
+TRAIN_ITERS=50000
+SEED=10
+RESOLUTION=256
+LABEL_DIM=0
+DATASET_NAME="FFHQ"
+
+# Diffusion + GAN configs
+DFAKE_GEN_UPDATE_RATIO=5
+CLS_LOSS_WEIGHT=1e-2
+GEN_CLS_LOSS_WEIGHT=3e-3
+DMD_LOSS_WEIGHT=1
+DIFFUSION_GAN_MAX_TIMESTEP=1000
+
+# Denoising
+NUM_DENOISING_STEP=2
+DENOISING_SIGMA_END=0.5
+
+# Logging & checkpoints
+LOG_ITERS=500
+WANDB_ITERS=100
+MAX_CHECKPOINT=100
+
+# GPU & distributed
+CUDA_VISIBLE_DEVICES=3
+export CUDA_VISIBLE_DEVICES
 export PYTHONPATH=$(pwd):$PYTHONPATH
-
-# SRC="/export/datasets/public/diffusion_datasets/adaptation/datasets/targets/FFHQ_lmdb/"
-# DST="$PROJECT_PATH/datasets/10-shot/FFHQ_lmdb/"
-# mkdir -p "$DST"
-# rsync -avh --info=progress2 "$SRC" "$DST"
-
-# SRC="/export/datasets/public/diffusion_datasets/adaptation/checkpoints/ffhq.pt"
-# DST="$PROJECT_PATH/checkpoint_path/"
-# mkdir -p "$DST"
-# rsync -avh --info=progress2 "$SRC" "$DST"
-
 export MASTER_ADDR=127.0.0.1
-export MASTER_PORT=$(shuf -i 20000-65000 -n 1)   # pick a random free port
+export MASTER_PORT=$(shuf -i 20000-65000 -n 1)
 
-CUDA_VISIBLE_DEVICES=3 torchrun --nproc_per_node 1 --nnodes 1 --master_addr "$MASTER_ADDR" --master_port "$MASTER_PORT" main/dhariwal/train_dhariwal.py \
-    --generator_lr 2e-6  \
-    --guidance_lr 2e-6  \
-    --train_iters 50000 \
-    --output_path $PROJECT_PATH/checkpoint_path/FFHQ256_dmd1_few-step \
-    --batch_size 1 \
-    --initialie_generator --log_iters 500 \
-    --resolution 256 \
-    --label_dim 0 \
-    --dataset_name "FFHQ" \
-    --seed 10 \
-    --model_id $PROJECT_PATH/checkpoint_path/ffhq.pt \
-    --wandb_iters 100 \
-    --wandb_entity $WANDB_ENTITY \
-    --wandb_project $WANDB_PROJECT \
-    --wandb_name "FFHQ_DMD1_few-step"   \
-    --real_image_path 0_myfiles_face/datasets/FFHQ_lmdb \
-    --dfake_gen_update_ratio 5 \
-    --cls_loss_weight 1e-2 \
+############################
+# Run Training
+############################
+
+CUDA_VISIBLE_DEVICES=3 torchrun \
+  --nproc_per_node 1 \
+  --nnodes 1 \
+  --master_addr "$MASTER_ADDR" \
+  --master_port "$MASTER_PORT" \
+  main/dhariwal/train_dhariwal.py \
+    --generator_lr $GENERATOR_LR \
+    --guidance_lr $GUIDANCE_LR \
+    --train_iters $TRAIN_ITERS \
+    --output_path "$OUTPUT_PATH" \
+    --batch_size $BATCH_SIZE \
+    --initialie_generator \
+    --log_iters $LOG_ITERS \
+    --resolution $RESOLUTION \
+    --label_dim $LABEL_DIM \
+    --dataset_name "$DATASET_NAME" \
+    --seed $SEED \
+    --model_id "$CHECKPOINT_INIT" \
+    --wandb_iters $WANDB_ITERS \
+    --wandb_entity "$WANDB_ENTITY" \
+    --wandb_project "$WANDB_PROJECT" \
+    --wandb_name "$WANDB_NAME" \
+    --real_image_path "$REAL_IMAGE_PATH" \
+    --dfake_gen_update_ratio $DFAKE_GEN_UPDATE_RATIO \
+    --cls_loss_weight $CLS_LOSS_WEIGHT \
     --gan_classifier \
-    --gen_cls_loss_weight 3e-3 \
-    --dmd_loss_weight 1 \
+    --gen_cls_loss_weight $GEN_CLS_LOSS_WEIGHT \
+    --dmd_loss_weight $DMD_LOSS_WEIGHT \
     --diffusion_gan \
-    --diffusion_gan_max_timestep 1000 \
+    --diffusion_gan_max_timestep $DIFFUSION_GAN_MAX_TIMESTEP \
     --delete_ckpts \
-    --max_checkpoint 100 \
+    --max_checkpoint $MAX_CHECKPOINT \
     --denoising \
-    --num_denoising_step 2 \
-    --denoising_sigma_end 0.5
+    --num_denoising_step $NUM_DENOISING_STEP \
+    --denoising_sigma_end $DENOISING_SIGMA_END

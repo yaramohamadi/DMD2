@@ -9,13 +9,14 @@ CUDA_VISIBLE_DEVICES=3
 export CUDA_VISIBLE_DEVICES
 
 # Project paths
+EXPERIMENT_NAME="FFHQ_dmd1_fewstep"
 PROJECT_PATH="0_myfiles_face"                                 # checkpoint & dataset folder
-CHECKPOINT_FOLDER="$PROJECT_PATH/checkpoint_path/FFHQ256_dmd1_few-step/time_1756950108_seed10"
+CHECKPOINT_FOLDER="$PROJECT_PATH/checkpoint_path/$EXPERIMENT_NAME/"
 
 # Weights & Biases (W&B) tracking
 WANDB_ENTITY="yara-mohammadi-bahram-1-ecole-superieure-de-technologie"
 WANDB_PROJECT="DMD_face"
-WANDB_NAME="FFHQ_dmd1_bf16_test_fewstep"
+WANDB_NAME="{$EXPERIMENT_NAME}_evaluation"
 
 # Dataset & evaluation
 FID_NPZ_ROOT="$PROJECT_PATH/datasets/fid_npz"                 # must contain ${CATEGORY}.npz

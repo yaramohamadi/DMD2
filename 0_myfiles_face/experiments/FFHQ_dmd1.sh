@@ -3,16 +3,6 @@ export WANDB_ENTITY="yara-mohammadi-bahram-1-ecole-superieure-de-technologie" # 
 export WANDB_PROJECT="DMD_face" # change this to your own wandb project
 export CUDA_VISIBLE_DEVICES=3
 
-# SRC="/export/datasets/public/diffusion_datasets/adaptation/datasets/targets/FFHQ_lmdb/"
-# DST="$PROJECT_PATH/datasets/10-shot/FFHQ_lmdb/"
-# mkdir -p "$DST"
-# rsync -avh --info=progress2 "$SRC" "$DST"
-
-# SRC="/export/datasets/public/diffusion_datasets/adaptation/checkpoints/ffhq.pt"
-# DST="$PROJECT_PATH/checkpoint_path/"
-# mkdir -p "$DST"
-# rsync -avh --info=progress2 "$SRC" "$DST"
-
 export MASTER_ADDR=127.0.0.1
 export MASTER_PORT=$(shuf -i 20000-65000 -n 1)   # pick a random free port
 

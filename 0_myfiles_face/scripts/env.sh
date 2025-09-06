@@ -104,8 +104,7 @@ if [[ "$MODE" == "cc" ]]; then
     fonttools>=4.22.0 \
     kiwisolver>=1.3.1 \
     "python-dateutil>=2.7,<3"
-
-
+    
   # from repo root
   rm -rf third_party/dhariwal
   mkdir -p third_party
