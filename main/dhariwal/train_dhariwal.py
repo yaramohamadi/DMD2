@@ -45,6 +45,7 @@ class Trainer:
 
         print(accelerator.state)
 
+        # TODO I removed seed and time from checkpoint path
         # Enable checkpoint resuming and saving in the same wandb run
         if accelerator.is_main_process:
             if args.checkpoint_path is not None:
@@ -55,7 +56,7 @@ class Trainer:
             else:
                 # fresh run
                 self.run_id = int(time.time())
-                output_path = os.path.join(args.output_path, f"time_{self.run_id}_seed{args.seed}")
+                output_path = args.output_path
                 os.makedirs(output_path, exist_ok=False)
                 self.output_path = output_path
 
@@ -65,7 +66,7 @@ class Trainer:
                     parent = os.path.basename(os.path.dirname(self.output_path))  # e.g., time_1756313057_seed10
                     self.cache_dir = os.path.join(args.cache_dir, parent)
                 else:
-                    self.cache_dir = os.path.join(args.cache_dir, f"time_{getattr(self, 'run_id', int(time.time()))}_seed{args.seed}")
+                    self.cache_dir = args.cache_dir
                 os.makedirs(self.cache_dir, exist_ok=True)
                 
 
@@ -347,6 +348,10 @@ class Trainer:
                     compute_generator_gradient=COMPUTE_GENERATOR_GRADIENT,
                     generator_turn=True, guidance_turn=False
                 )
+
+                print('Feed forward generator model')
+                print(gen_loss_dict.keys())
+                print(gen_log_dict.keys())
                 
                 if COMPUTE_GENERATOR_GRADIENT:
                     generator_loss = self.dmd_loss_weight * gen_loss_dict["loss_dm"]
@@ -379,6 +384,10 @@ class Trainer:
                     generator_turn=False, guidance_turn=True,
                     guidance_data_dict=gen_log_dict.get('guidance_data_dict', None)
                 )
+
+                print('Feed forward guidance model')
+                print(guid_loss_dict.keys())
+                print(guid_log_dict.keys())
 
                 guidance_loss = guid_loss_dict["loss_fake_mean"]
                 if self.gan_classifier:
