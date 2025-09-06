@@ -206,7 +206,12 @@ class Trainer:
             'faketrain_latents',
             'faketrain_noisy_latents',
             'faketrain_x0_pred',
+            'pred_realism_on_fake',
+            'pred_realism_on_real',
+            'critic_fake',
+            'critic_real',
         ]
+
         for k in tkeys:
             v = log_dict.get(k, None)
             if isinstance(v, torch.Tensor):
