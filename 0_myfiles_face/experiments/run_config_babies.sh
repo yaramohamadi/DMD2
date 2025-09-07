@@ -38,8 +38,8 @@ export MAX_CHECKPOINT=100
 
 export FID_NPZ_ROOT="$PROJECT_PATH/datasets/fid_npz"
 export CATEGORY="babies"
-export FEWSHOT_DATASET="$PROJECT_PATH/datasets/babies/0"
-export EVAL_BATCH_SIZE=4
+export FEWSHOT_DATASET="$PROJECT_PATH/10-shot/datasets/babies/0"
+export EVAL_BATCH_SIZE=3
 export TOTAL_EVAL_SAMPLES=5000
 export CONDITIONING_SIGMA=80.0
 export LPIPS_CLUSTER_SIZE=100
@@ -53,6 +53,14 @@ export GAN_MULTIHEAD="--gan_multihead"
 # -----------------------
 # Sweep ranges
 # -----------------------
+
+# LR 2e-6 -> Batch-size 40 -> Iterations 400k
+# Using linear scaling: 
+# LR 2e-7 -> Batch-size 4 -> Iterations 4M
+# LR 1.5e-7 -> Batch-size 3 -> Iterations 6M
+# LR 1e-7 -> Batch-size 2 -> Iterations 8M
+# LR 5e-8 -> Batch-size 1 -> Iterations 16M
+
 export GEN_LRS=(2e-6)
 export BATCH_SIZES=(1)
 export DENOISE_STEPS=(2)

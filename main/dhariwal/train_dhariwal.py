@@ -461,7 +461,12 @@ class Trainer:
                     faketrain_latents       = agg_or_last('faketrain_latents')
                     faketrain_noisy_latents = agg_or_last('faketrain_noisy_latents')
                     faketrain_x0_pred       = agg_or_last('faketrain_x0_pred')
+                    
 
+                    print(dmtrain_pred_real_image)
+                    exit()
+
+                    
                     # -------- visuals & simple stats --------
                     gen_img_vis = (generated_image * 0.5 + 0.5).clamp(0, 1)
                     generated_image_brightness = float(gen_img_vis.mean())
