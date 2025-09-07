@@ -14,7 +14,7 @@ export MASTER_PORT=$(shuf -i 20000-65000 -n 1)   # pick a random free port
 
 export PROJECT_PATH="0_myfiles_face"
 export CHECKPOINT_INIT="$PROJECT_PATH/checkpoint_path/ffhq.pt"
-export REAL_IMAGE_PATH="$PROJECT_PATH/datasets/10-shot/FFHQ_lmdb"
+export REAL_IMAGE_PATH="$PROJECT_PATH/datasets/targets/FFHQ_lmdb"
 
 export WANDB_ENTITY="yara-mohammadi-bahram-1-ecole-superieure-de-technologie"
 export WANDB_PROJECT="DMD_face"
@@ -38,7 +38,7 @@ export MAX_CHECKPOINT=100
 
 export FID_NPZ_ROOT="$PROJECT_PATH/datasets/fid_npz"
 export CATEGORY="FFHQ"
-export FEWSHOT_DATASET="/export/datasets/public/diffusion_datasets/adaptation/datasets/targets/10_babies/0/"
+export FEWSHOT_DATASET="$PROJECT_PATH/datasets/targets/10_babies/0/"
 export EVAL_BATCH_SIZE=3
 export TOTAL_EVAL_SAMPLES=5000
 export CONDITIONING_SIGMA=80.0

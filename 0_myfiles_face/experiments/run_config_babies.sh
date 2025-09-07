@@ -1,25 +1,55 @@
 #!/bin/bash
+#SBATCH --job-name=dmd2_babies_bs3_1gpu
+#SBATCH --account=def-hadi87
+#SBATCH --nodes=1
+#SBATCH --gres=gpu:h100:4
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=80G
+#SBATCH --time=24:00:00
+#SBATCH --mail-user=yara.mohammadi-bahram.1@ens.etsmtl.ca   # <-- put your email here
+#SBATCH --mail-type=BEGIN,END,FAIL
+#SBATCH --output=0_myfiles_face/slurm/%x-%j.out
+#SBATCH --error=0_myfiles_face/slurm/%x-%j.err
+
 set -e
+
+# Compute canada mode:
+ENV_NAME="dmd2"
+PY_VER="3.10.13"
+module load StdEnv/2023 python/$PY_VER
+module load rust/1.85.0
+module load gcc opencv/4.9.0
+module load arrow/15.0.1
+# --- versions/paths you can tweak ---
+VENV_DIR="${PROJECT:-$HOME}/dmd2_env"  # used only for cc mode
+# 1) venv
+python -m venv "$VENV_DIR"
+source "$VENV_DIR/bin/activate"
+
+REPO_ROOT="/home/ymbahram/projects/def-hadi87/ymbahram/DMD2/DMD2/"
+cd "$REPO_ROOT"
+export PYTHONPATH="$REPO_ROOT:$PYTHONPATH"
+# python -m pip check
 
 # -----------------------
 # Fixed configs
 # -----------------------
-export CUDA_VISIBLE_DEVICES=2,3
-export TRAIN_GPUS=2,3
+export CUDA_VISIBLE_DEVICES=0,1,2,3
+export TRAIN_GPUS=0,1,2,3
 export TEST_GPUS=3
-export NPROC_PER_NODE=2
+export NPROC_PER_NODE=4
 export NNODES=1
 export MASTER_ADDR=127.0.0.1
 export MASTER_PORT=$(shuf -i 20000-65000 -n 1)   # pick a random free port
 
 export PROJECT_PATH="0_myfiles_face"
-export CHECKPOINT_INIT="$PROJECT_PATH/checkpoint_path/ffhq.pt"
-export REAL_IMAGE_PATH="$PROJECT_PATH/datasets/10-shot/babies_lmdb"
+export CHECKPOINT_INIT="$PROJECT_PATH/checkpoints/ffhq.pt"
+export REAL_IMAGE_PATH="$PROJECT_PATH/datasets/targets/10_babies_lmdb"
 
 export WANDB_ENTITY="yara-mohammadi-bahram-1-ecole-superieure-de-technologie"
 export WANDB_PROJECT="DMD_face"
 
-export TRAIN_ITERS=20000
+export TRAIN_ITERS=100000
 export SEED=10
 export RESOLUTION=256
 export LABEL_DIM=0
@@ -32,15 +62,15 @@ export GEN_CLS_LOSS_WEIGHT=3e-3
 export DMD_LOSS_WEIGHT=1
 export DIFFUSION_GAN_MAX_TIMESTEP=1000
 
-export LOG_ITERS=100
+export LOG_ITERS=500
 export WANDB_ITERS=100
 export MAX_CHECKPOINT=100
 
 export FID_NPZ_ROOT="$PROJECT_PATH/datasets/fid_npz"
 export CATEGORY="babies"
-export FEWSHOT_DATASET="$PROJECT_PATH/10-shot/datasets/babies/0"
-export EVAL_BATCH_SIZE=3
-export TOTAL_EVAL_SAMPLES=5000
+export FEWSHOT_DATASET="$PROJECT_PATH/datasets/targets/10_babies/0"
+export EVAL_BATCH_SIZE=8
+export TOTAL_EVAL_SAMPLES=1000
 export CONDITIONING_SIGMA=80.0
 export LPIPS_CLUSTER_SIZE=100
 export NO_LPIPS="" # --no_lpips
@@ -49,6 +79,9 @@ export GAN_HEAD_TYPE="global"
 export GAN_HEAD_LAYERS="all"
 export GAN_ADV_LOSS="bce"
 export GAN_MULTIHEAD="--gan_multihead"
+
+export ACCELERATE_LOG_LEVEL=error   # or error
+export TRANSFORMERS_VERBOSITY=error   # optional: quiet transformers too
 
 # -----------------------
 # Sweep ranges
@@ -61,9 +94,9 @@ export GAN_MULTIHEAD="--gan_multihead"
 # LR 1e-7 -> Batch-size 2 -> Iterations 8M
 # LR 5e-8 -> Batch-size 1 -> Iterations 16M
 
-export GEN_LRS=(2e-6)
-export BATCH_SIZES=(1)
-export DENOISE_STEPS=(2)
+export GEN_LRS=(2e-7)
+export BATCH_SIZES=(2)
+export DENOISE_STEPS=(3)
 
 # -----------------------
 # Sweep loop

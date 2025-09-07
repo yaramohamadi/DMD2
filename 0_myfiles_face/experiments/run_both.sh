@@ -80,4 +80,5 @@ test &    # run in background
 TEST_PID=$!
 
 # Wait for both to finish
+wait $TEST_PID
 wait $TRAIN_PID

@@ -121,9 +121,17 @@ def draw_probability_histogram(data):
     canvas.draw()
 
     # Get the canvas as a PIL image
-    image = Image.frombytes(
-        "RGB", canvas.get_width_height(), canvas.tostring_rgb()
-    )
+    w, h = canvas.get_width_height()
+    try:
+        # Older Matplotlib (<3.9)
+        rgb_bytes = canvas.tostring_rgb()
+        image = Image.frombytes("RGB", (w, h), rgb_bytes)
+    except AttributeError:
+        # Newer Matplotlib (>=3.9): use RGBA buffer, then convert to RGB
+        rgba = np.frombuffer(canvas.buffer_rgba(), dtype=np.uint8).reshape(h, w, 4)
+        image = Image.fromarray(rgba, mode="RGBA").convert("RGB")
+
+
     plt.close('all')
     return image
 

@@ -273,7 +273,7 @@ class Trainer:
                 _safe_rmtree(tmp_dir)
             tmp_dir.mkdir(parents=True, exist_ok=True)
 
-            self.accelerator.save_state(str(tmp_dir))
+            self.accelerator.save_state(str(tmp_dir), safe_serialization=False)
 
             try:
                 os.replace(str(tmp_dir), str(final_dir))
@@ -461,10 +461,6 @@ class Trainer:
                     faketrain_latents       = agg_or_last('faketrain_latents')
                     faketrain_noisy_latents = agg_or_last('faketrain_noisy_latents')
                     faketrain_x0_pred       = agg_or_last('faketrain_x0_pred')
-                    
-
-                    print(dmtrain_pred_real_image)
-                    exit()
 
                     
                     # -------- visuals & simple stats --------

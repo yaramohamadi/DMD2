@@ -187,3 +187,5 @@ ignored_cache
 0_myfiles_imagenet/*
 0_myfiles_face/datasets/*
 0_myfiles_face/checkpoint_path/*
+
+*.pt

@@ -51,7 +51,6 @@ if [[ "$MODE" == "local" ]]; then
   python -m pip install -e third_party/dhariwal --no-deps --no-build-isolation
 
   echo "✅ Done (local). Next time: conda activate $ENV_NAME"
-  exit 0
 fi
 
 # ---------- COMPUTE CANADA (virtualenv) ----------
@@ -64,19 +63,34 @@ if [[ "$MODE" == "cc" ]]; then
   # 1) venv
   python -m venv "$VENV_DIR"
   source "$VENV_DIR/bin/activate"
-  exit 0
+
+  pip install --no-cache-dir --index-url https://pypi.org/simple lpips==0.1.4
+  # Ask Python where lpips expects the weights
+  WD=$(python - <<'PY'
+import lpips, pathlib
+print(pathlib.Path(lpips.__file__).parent/'weights'/'v0.1')
+PY
+)
+  mkdir -p "$WD"
+
+  # Download the official weights (do this on the login node; it propagates to the compute node)
+  curl -L -o "$WD/vgg.pth"     https://github.com/richzhang/PerceptualSimilarity/raw/master/lpips/weights/v0.1/vgg.pth
+  curl -L -o "$WD/alex.pth"    https://github.com/richzhang/PerceptualSimilarity/raw/master/lpips/weights/v0.1/alex.pth
+  curl -L -o "$WD/squeeze.pth" https://github.com/richzhang/PerceptualSimilarity/raw/master/lpips/weights/v0.1/squeeze.pth
+  ls -lh "$WD"
 
   # 3) PyTorch
   pip install \
         "torch==2.1.2+${TORCH_CUDA_TAG}" \
-        "torchvision==0.15.2+${TORCH_CUDA_TAG}" \
+        "torchvision==0.16.2+${TORCH_CUDA_TAG}" \
         --extra-index-url "https://download.pytorch.org/whl/${TORCH_CUDA_TAG}"
 
   # 4) Repo deps
   pip install -r requirements.txt
   pip install -e .
-  pip install lpips scikit-learn
+  pip install scikit-learn
   pip install --no-deps "datasets==4.0.0"
+
 
   # 2) Tools + anyio
   pip install -U pip setuptools wheel
@@ -85,12 +99,12 @@ if [[ "$MODE" == "cc" ]]; then
   pip install -U typing_extensions sympy exceptiongroup packaging platformdirs psutil \
                numpy==1.26.4 pillow==10.4.0 scipy
 
-  pip install -U "huggingface-hub>=0.24.0" pandas matplotlib
-  pip install -U --no-cache-dir diffusers==0.35.1
+  pip install -U "huggingface-hub==0.22.2" pandas matplotlib
+  pip install -U --no-cache-dir diffusers==0.30.2
   pip install -U peft==0.17.1
-  pip install -U "accelerate>0.28.0"
-  pip install -U "transformers>=4.46" "tokenizers>=0.20"
-  pip install -U "pyparsing>=3.1,<3.2"
+  pip install -U "accelerate==0.27.2"
+  pip install -U "transformers==4.38.2" "tokenizers==0.15.2"
+  pip install -U "pyparsing==3.1.2"
 
   env -u PIP_FIND_LINKS pip install --no-cache-dir --no-binary=lmdb "lmdb==1.4.1"
 
