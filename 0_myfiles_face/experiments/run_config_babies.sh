@@ -38,12 +38,17 @@ export MAX_CHECKPOINT=100
 
 export FID_NPZ_ROOT="$PROJECT_PATH/datasets/fid_npz"
 export CATEGORY="babies"
-export FEWSHOT_DATASET="/export/datasets/public/diffusion_datasets/adaptation/datasets/targets/10_babies/0/"
+export FEWSHOT_DATASET="$PROJECT_PATH/datasets/babies/0"
 export EVAL_BATCH_SIZE=4
 export TOTAL_EVAL_SAMPLES=5000
 export CONDITIONING_SIGMA=80.0
 export LPIPS_CLUSTER_SIZE=100
-export NO_LPIPS=""
+export NO_LPIPS="" # --no_lpips
+
+export GAN_HEAD_TYPE="global"
+export GAN_HEAD_LAYERS="all"
+export GAN_ADV_LOSS="bce"
+export GAN_MULTIHEAD="--gan_multihead"
 
 # -----------------------
 # Sweep ranges

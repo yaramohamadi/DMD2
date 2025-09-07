@@ -41,7 +41,11 @@ train() {
       --max_checkpoint $MAX_CHECKPOINT \
       --denoising \
       --num_denoising_step $NUM_DENOISING_STEP \
-      --denoising_sigma_end $DENOISING_SIGMA_END
+      --denoising_sigma_end $DENOISING_SIGMA_END \
+      $GAN_MULTIHEAD \
+      --gan_head_type "$GAN_HEAD_TYPE" \
+      --gan_head_layers "$GAN_HEAD_LAYERS" \
+      --gan_adv_loss "$GAN_ADV_LOSS"
 }
 
 # -----------------------
