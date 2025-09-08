@@ -820,11 +820,6 @@ class Evaluator:
             device=device, num_workers=num_workers
         ).astype(np.float32)
 
-        # (Optional) size-balance to keep pairwise matrices manageable
-        n = min(len(real_feats), len(fake_feats))
-        real_feats = real_feats[:n]
-        fake_feats = fake_feats[:n]
-
         prdc_out = compute_prdc(
             real_features=real_feats,
             fake_features=fake_feats,

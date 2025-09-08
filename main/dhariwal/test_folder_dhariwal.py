@@ -27,6 +27,7 @@ from main.dhariwal.dhariwal_network import get_edm_network  # this builds Dhariw
 from argparse import Namespace
 from main.dhariwal.evaluation_util import Evaluator
 
+torch.set_num_threads(int(os.getenv("OMP_NUM_THREADS", "1")))
 
 
 # Helpers for saving best checkpoints ---------------------------------
@@ -102,6 +103,56 @@ def copy_checkpoint_as_best(src_ckpt_dir: Path, root: Path, iteration: int, fid_
         pass
 
     return dst_dir
+
+def locate_best_checkpoint_dir(folder: str, overall_stats: dict | None = None) -> str | None:
+    """
+    Prefer, in order:
+      1) <folder>/checkpoint_best (copy/symlink maintained by evaluator)
+      2) best_ckpt.json's 'dst' (or 'src')
+      3) min-FID entry from stats.json
+    Returns a path to a directory that looks like 'checkpoint_*' (or 'checkpoint_best'), or None.
+    """
+    root = Path(folder)
+    best_dir, meta_p, _ = _best_paths(root)
+
+    # 1) checkpoint_best directory
+    if best_dir.exists() and best_dir.is_dir():
+        return str(best_dir)
+
+    # 2) best_ckpt.json
+    if meta_p.exists():
+        try:
+            with open(meta_p, "r") as f:
+                meta = json.load(f)
+            cand = meta.get("dst") or meta.get("src")
+            if cand and Path(cand).exists():
+                return cand
+        except Exception:
+            pass
+
+    # 3) Lowest FID in stats.json
+    if overall_stats is None:
+        info_path = os.path.join(folder, "stats.json")
+        if os.path.isfile(info_path):
+            try:
+                with open(info_path, "r") as f:
+                    overall_stats = json.load(f)
+            except Exception:
+                overall_stats = None
+
+    if overall_stats:
+        try:
+            best_ckpt = min(
+                overall_stats.items(),
+                key=lambda kv: float(kv[1].get("fid", float("inf")))
+            )[0]
+            if best_ckpt and Path(best_ckpt).exists():
+                return best_ckpt
+        except Exception:
+            pass
+
+    return None
+
 # ----------------------------------------------------------------------
 
 # --------------------------------------------------------------------
@@ -177,6 +228,31 @@ def create_generator(checkpoint_path, base_model=None):
     return generator
 
 
+# For few-step sampling
+def _make_sigma_schedule(sigma_start: torch.Tensor, K: int, sigma_end: float) -> torch.Tensor:
+    """
+    Monotonically decreasing per-sample sigma schedule of length K.
+    Mirrors the geometric (log-space) interpolation you use in training.
+    Returns: [K, B] tensor.
+    """
+    if sigma_start.ndim > 1:
+        sigma_start = sigma_start.view(sigma_start.shape[0], -1)[:, 0]  # [B]
+    B = sigma_start.shape[0]
+    s0 = sigma_start.clamp_min(sigma_end + 1e-8)
+    sK = torch.full_like(s0, float(sigma_end))
+    t0 = torch.log(s0); tK = torch.log(sK)
+    grid = torch.linspace(0, 1, steps=K, device=s0.device, dtype=s0.dtype).unsqueeze(1)  # [K,1]
+    logs = t0.unsqueeze(0) * (1 - grid) + tK.unsqueeze(0) * grid                         # [K,B]
+    return torch.exp(logs)                                                                # [K,B]
+
+def _re_noise(x0: torch.Tensor, sigma_next: torch.Tensor) -> torch.Tensor:
+    """EDM corruption x = x0 + sigma * eps (same as in your training model)."""
+    if sigma_next.ndim == 1:
+        sigma_next = sigma_next.view(-1, 1, 1, 1)
+    return x0 + sigma_next * torch.randn_like(x0)
+
+
+
 
 @torch.no_grad()
 def sample(accelerator, current_model, args, model_index):
@@ -213,24 +289,47 @@ def sample(accelerator, current_model, args, model_index):
     rank0_chunks = []
     if accelerator.is_main_process:
         pbar = tqdm(total=total, desc=f"Sampling {total} @ {args.resolution}", ncols=100)
-
+    
+    # Supporting both 1 step and multi-step
     for _ in range(steps):
-        # All ranks generate the same batch size -> gather has consistent shapes
         cur = bs
-        t   = torch.full((cur,), args.conditioning_sigma, device=dev)
 
-        noise = torch.randn(cur, 3, args.resolution, args.resolution, device=dev)
+        if (not args.denoising) or (args.num_denoising_step <= 1):
+            # -------- one-step path (existing behavior) --------
+            t = torch.full((cur,), args.conditioning_sigma, device=dev)
+            noise = torch.randn(cur, 3, args.resolution, args.resolution, device=dev)
+            imgs = current_model(noise * args.conditioning_sigma, t, const_label_zero(cur))  # [-1,1], NCHW
+        else:
+            # -------- few-step (K-step) unrolled path --------
+            K = int(max(1, args.num_denoising_step))
+            # start at sigma0 = conditioning_sigma (per-sample)
+            sigma0 = torch.full((cur,), args.conditioning_sigma, device=dev)
+            # initial x is pure noise at sigma0
+            x = torch.randn(cur, 3, args.resolution, args.resolution, device=dev) * sigma0.view(-1,1,1,1)
+            y = const_label_zero(cur)
 
-        imgs = current_model(noise * args.conditioning_sigma, t, const_label_zero(cur))  # [-1,1], NCHW
+            # build decreasing schedule [K, B] from sigma0 -> denoising_sigma_end
+            sigmas = _make_sigma_schedule(sigma0, K, args.denoising_sigma_end)
+
+            last_x0 = None
+            for i in range(K):
+                si = sigmas[i]                     # [B]
+                # predict x0 at this sigma (your Dhariwal adapter returns x0)
+                x0_hat = current_model(x, si, y)   # [-1,1], NCHW
+                last_x0 = x0_hat
+                if i + 1 < K:
+                    s_next = sigmas[i + 1]         # [B]
+                    x = _re_noise(x0_hat, s_next)  # re-noise back up to next sigma
+            imgs = last_x0
 
         imgs_u8 = ((imgs + 1.0) * 127.5).clamp(0, 255).to(torch.uint8)     # NCHW
         imgs_u8 = imgs_u8.permute(0, 2, 3, 1).contiguous()                  # NHWC
 
-        # Gather (shape-consistent across ranks), then only rank 0 stores/updates tqdm
         gathered = accelerator.gather(imgs_u8)
         if accelerator.is_main_process:
             rank0_chunks.append(gathered.cpu())
-            pbar.update(gathered.size(0))  # global increment by world*bs each step
+            pbar.update(gathered.size(0))
+
 
     if accelerator.is_main_process:
         pbar.close()
@@ -279,6 +378,15 @@ def evaluate():
     parser.add_argument("--fewshotdataset", type=str, default="", help="Path to few-shot dataset (intra-LPIPS eval)")
     parser.add_argument("--no_lpips", action="store_true", help="Disable LPIPS computation to save time")
     parser.add_argument("--use_fp16", action="store_true", help="Use bf16 for inference (if supported by GPU/driver)")
+    parser.add_argument("--eval_best_once", action="store_true",
+                        help="Evaluate only the best checkpoint once and exit")   
+    parser.add_argument("--denoising", action="store_true",
+                    help="Enable few-step (K-step) unrolled sampling like training.")
+    parser.add_argument("--num_denoising_step", type=int, default=1,
+                        help="K steps; 1 = single-step (current behavior).")
+    parser.add_argument("--denoising_sigma_end", type=float, default=0.5,
+                        help="Terminal sigma for the unrolled schedule.")
+
 
     args = parser.parse_args()
 
@@ -314,6 +422,114 @@ def evaluate():
 
     # define generator before loop
     generator = None
+
+
+    model_index = -1
+    # --- One-shot best-checkpoint evaluation and exit -----------------
+    if args.eval_best_once:
+        target_dir = locate_best_checkpoint_dir(folder, overall_stats)
+        if target_dir is None:
+            if accelerator.is_main_process:
+                print("[eval_best_once] No best checkpoint found (checkpoint_best/, best_ckpt.json, or stats.json). Exiting.")
+            return
+
+        ckpt_path = Path(target_dir)
+        ckpt_name = ckpt_path.name
+        if ckpt_name.startswith("checkpoint_model_"):
+            try:
+                model_index = int(ckpt_name.split("_")[-1])
+            except Exception:
+                model_index = -1  # not critical
+
+        # If it's the synthetic 'checkpoint_best' dir, don't rely on .READY
+        ready = True if ckpt_name == BEST_DIR_NAME else is_checkpoint_ready(ckpt_path)
+        if not ready:
+            if accelerator.is_main_process:
+                print(f"[eval_best_once] Best checkpoint found at {target_dir} but not READY. Exiting.")
+            return
+
+        if not try_eval_lock(ckpt_path):
+            if accelerator.is_main_process:
+                print(f"[eval_best_once] Could not acquire lock for {target_dir}. Exiting.")
+            return
+
+        #try:
+        generator = create_generator(
+            str(ckpt_path / "pytorch_model.bin"),
+            base_model=None  # fresh construct is fine here
+        ).to(accelerator.device)
+
+        all_images_tensor = sample(accelerator, generator, args, model_index)
+
+
+        # TMP TODO: save numpy for inspection
+        # tmp_npy = os.path.join(folder, f"_tmp_imgs_{model_index:06d}.npy")
+        #print('saving', tmp_npy)
+        #np.save(tmp_npy, all_images_tensor.numpy())
+        #print('saved', tmp_npy)
+        #exit()
+        # TMP TODO: load numpy for testing
+        # Reload mem-mapped to keep RAM down (zero-copy into torch via from_numpy)
+        # print('loading', tmp_npy)
+        # imgs_memmap = np.load(tmp_npy, mmap_mode='r')   # dtype=uint8, shape [N, H, W, 3]
+        # all_images_tensor = torch.from_numpy(imgs_memmap)  # still NHWC uint8, CPU
+
+
+
+        # (bugfix) ensure f-string here:
+        n = all_images_tensor.size(0)
+        g = int(np.floor(np.sqrt(min(100, n))))
+        g = max(1, g)
+        grid = all_images_tensor[:g*g].numpy().reshape(g, g, args.resolution, args.resolution, 3)
+        grid = np.swapaxes(grid, 1, 2).reshape(g*args.resolution, g*args.resolution, 3)
+        grid_path = f"grid_{model_index:06d}.png"
+        Image.fromarray(np.ascontiguousarray(grid)).save(grid_path)
+
+        imgs_nchw_f01 = all_images_tensor.permute(0, 3, 1, 2).to(torch.float32) / 255.0
+        ref_npz_path = os.path.join(args.fid_npz_root, f"{args.category}.npz")
+        if accelerator.is_main_process:
+            print(f"[Evaluator] Using FID reference: {ref_npz_path}")
+
+        eval_args = Namespace(**{
+            "device": str(accelerator.device),
+            "category": args.category,
+            "fewshotdataset": args.fewshotdataset,
+            "normalization": True,
+        })
+
+        stats = {}
+        if accelerator.is_main_process:
+            evaluator = Evaluator(eval_args, imgs_nchw_f01, ref_npz_path, args.lpips_cluster_size)
+            fid_score = evaluator.calc_fid()
+            prec, rec = evaluator.calc_precision_recall(nearest_k=5)
+            intra_lpips = -1.0 if args.no_lpips else evaluator.calc_intra_lpips()
+
+            stats["fid"] = float(fid_score)
+            stats["intra_lpips"] = float(intra_lpips)
+            stats["precision"] = float(prec)
+            stats["recall"] = float(rec)
+
+            print(f"[eval_best_once] {target_dir} FID {fid_score:.4f} Intra-LPIPS {intra_lpips:.4f}"
+                    f"Precision {prec:.4f} Recall {rec:.4f}") 
+
+            # persist/update stats.json under the same key used in the streaming path
+            overall_stats[target_dir] = stats
+            with open(os.path.join(folder, "stats.json"), "w") as f:
+                json.dump(overall_stats, f, indent=2)
+
+        if accelerator.is_main_process:
+            wandb.log(stats, step=model_index if model_index is not None else 0)
+
+        torch.cuda.empty_cache()
+        #finally:
+        release_eval_lock(ckpt_path)
+
+        # EXIT after single evaluation
+        return
+    # ------------------------------------------------------------------
+
+
+
 
     while True:
         # only directories named 'checkpoint_*'
@@ -375,7 +591,7 @@ def evaluate():
                 grid = np.swapaxes(grid, 1, 2).reshape(g*args.resolution, g*args.resolution, 3)
 
                 # save grid locally too
-                grid_path = "grid_{model_index:06d}.png"
+                grid_path = f"grid_{model_index:06d}.png"
 
                 # ensure C-contiguous uint8 for PIL
                 Image.fromarray(np.ascontiguousarray(grid)).save(grid_path)
