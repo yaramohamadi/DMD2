@@ -97,7 +97,7 @@ for lr in "${GEN_LRS[@]}"; do
       CONDITIONING_SIGMA=$CONDITIONING_SIGMA \
       LPIPS_CLUSTER_SIZE=$LPIPS_CLUSTER_SIZE \
       NO_LPIPS=$NO_LPIPS \
-      bash $PROJECT_PATH/experiments/run_both.sh
+      bash $PROJECT_PATH/compute_canada_experiments/run_both.sh
 
     done
   done

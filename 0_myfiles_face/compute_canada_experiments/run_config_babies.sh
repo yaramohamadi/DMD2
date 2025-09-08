@@ -47,7 +47,7 @@ export CHECKPOINT_INIT="$PROJECT_PATH/checkpoints/ffhq.pt"
 export REAL_IMAGE_PATH="$PROJECT_PATH/datasets/targets/10_babies_lmdb"
 
 export WANDB_ENTITY="yara-mohammadi-bahram-1-ecole-superieure-de-technologie"
-export WANDB_PROJECT="DMD_unconditional_babies_dmd_weight_ablation"
+export WANDB_PROJECT="${WANDB_PROJECT:-DMD_unconditional_babies_dmd_weight_ablation}"
 
 export TRAIN_ITERS=100000
 export SEED=10
@@ -59,7 +59,7 @@ export DENOISING_SIGMA_END=0.5
 export DFAKE_GEN_UPDATE_RATIO=5
 export CLS_LOSS_WEIGHT=5e-2 # 1e-2
 export GEN_CLS_LOSS_WEIGHT=15e-3 # 3e-3
-export DMD_LOSS_WEIGHT="${DMD_LOSS_WEIGHT:-1}"
+export DMD_LOSS_WEIGHT="${DMD_LOSS_WEIGHT:-0.1}"
 export DIFFUSION_GAN_MAX_TIMESTEP=1000
 
 export LOG_ITERS=2500
@@ -89,6 +89,8 @@ export OPENBLAS_NUM_THREADS=1
 export DEN_FLAG="--denoising"
 export BEST_FLAG="" # --eval_best_once
 
+export NUM_DENOISING_STEP="${NUM_DENOISING_STEP:-3}"
+
 # -----------------------
 # Sweep ranges
 # -----------------------
@@ -102,7 +104,7 @@ export BEST_FLAG="" # --eval_best_once
 
 export GEN_LRS=(5e-8)
 export BATCH_SIZES=(2)
-export DENOISE_STEPS=(3)
+export DENOISE_STEPS=("$NUM_DENOISING_STEP")
 
 # -----------------------
 # Sweep loop
@@ -148,7 +150,7 @@ for lr in "${GEN_LRS[@]}"; do
       CONDITIONING_SIGMA=$CONDITIONING_SIGMA \
       LPIPS_CLUSTER_SIZE=$LPIPS_CLUSTER_SIZE \
       NO_LPIPS=$NO_LPIPS \
-      bash $PROJECT_PATH/experiments/run_both.sh
+      bash $PROJECT_PATH/compute_canada_experiments/run_both.sh
 
     done
   done

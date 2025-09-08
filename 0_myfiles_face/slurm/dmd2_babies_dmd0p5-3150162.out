@@ -1,0 +1,53 @@
+[RUN] babies_lr5e-8_bs2_dn3_DMD_LOSS_WEIGHT0.5
+[train] Starting training...
+[test] Starting evaluation...
+Distributed environment: NO
+Num processes: 1
+Process index: 0
+Local process index: 0
+Device: cuda
+
+Mixed precision type: no
+
+Distributed environment: MULTI_GPU  Backend: nccl
+Num processes: 4
+Process index: 0
+Local process index: 0
+Device: cuda:0
+
+Mixed precision type: no
+Distributed environment: MULTI_GPU  Backend: nccl
+Num processes: 4
+Process index: 3
+Local process index: 3
+Device: cuda:3
+
+Mixed precision type: no
+Distributed environment: MULTI_GPU  Backend: nccl
+Num processes: 4
+Process index: 1
+Local process index: 1
+Device: cuda:1
+
+Mixed precision type: no
+
+
+
+Distributed environment: MULTI_GPU  Backend: nccl
+Num processes: 4
+Process index: 2
+Local process index: 2
+Device: cuda:2
+
+Mixed precision type: no
+
+wandb run dir: 0_myfiles_face/checkpoint_path/babies_lr5e-8_bs2_dn3_DMD_LOSS_WEIGHT0.5/wandb/run-20250907_200405-h5oyh44f/files
+[load_pt_with_logs] Loading weights from: 0_myfiles_face/checkpoints/ffhq.pt
+[load_pt_with_logs] Loading weights from: 0_myfiles_face/checkpoints/ffhq.pt
+[load_pt_with_logs] Loading weights from: 0_myfiles_face/checkpoints/ffhq.pt
+[load_pt_with_logs] Loading weights from: 0_myfiles_face/checkpoints/ffhq.pt
+[DhariwalUNetAdapter] Loaded weights (strict).
+[DhariwalUNetAdapter] Loaded weights (strict).
+[DhariwalUNetAdapter] Loaded weights (strict).[DhariwalUNetAdapter] Loaded weights (strict).
+
+run dir: 0_myfiles_face/checkpoint_path/babies_lr5e-8_bs2_dn3_DMD_LOSS_WEIGHT0.5/wandb/run-20250907_200455-zxtqkqel/files

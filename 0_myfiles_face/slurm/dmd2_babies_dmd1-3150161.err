@@ -1,0 +1,25 @@
+wandb: Currently logged in as: yara-mohammadi-bahram-1 (yara-mohammadi-bahram-1-ecole-superieure-de-technologie) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: WARNING Changes to your `wandb` environment variables will be ignored because your `wandb` session has already started. For more information on how to modify your settings with `wandb.init()` arguments, please refer to https://wandb.me/wandb-init.
+wandb: creating run
+wandb: Tracking run with wandb version 0.21.2
+wandb: Run data is saved locally in 0_myfiles_face/checkpoint_path/babies_lr5e-8_bs2_dn3_DMD_LOSS_WEIGHT1/wandb/run-20250907_200613-cnuudjji
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run babies_lr5e-8_bs2_dn3_DMD_LOSS_WEIGHT1
+wandb: ⭐️ View project at https://wandb.ai/yara-mohammadi-bahram-1-ecole-superieure-de-technologie/DMD_unconditional_babies_dmd_weight_ablation
+wandb: 🚀 View run at https://wandb.ai/yara-mohammadi-bahram-1-ecole-superieure-de-technologie/DMD_unconditional_babies_dmd_weight_ablation/runs/cnuudjji
+/home/ymbahram/dmd2_env/lib/python3.10/site-packages/torch/nn/modules/conv.py:456: UserWarning: Applied workaround for CuDNN issue, install nvrtc.so (Triggered internally at ../aten/src/ATen/native/cudnn/Conv_v8.cpp:80.)
+  return F.conv2d(input, weight, bias, self.stride,
+/home/ymbahram/dmd2_env/lib/python3.10/site-packages/torch/nn/modules/conv.py:456: UserWarning: Applied workaround for CuDNN issue, install nvrtc.so (Triggered internally at ../aten/src/ATen/native/cudnn/Conv_v8.cpp:80.)
+  return F.conv2d(input, weight, bias, self.stride,
+/home/ymbahram/dmd2_env/lib/python3.10/site-packages/torch/nn/modules/conv.py:456: UserWarning: Applied workaround for CuDNN issue, install nvrtc.so (Triggered internally at ../aten/src/ATen/native/cudnn/Conv_v8.cpp:80.)
+  return F.conv2d(input, weight, bias, self.stride,
+/home/ymbahram/dmd2_env/lib/python3.10/site-packages/torch/nn/modules/conv.py:456: UserWarning: Applied workaround for CuDNN issue, install nvrtc.so (Triggered internally at ../aten/src/ATen/native/cudnn/Conv_v8.cpp:80.)
+  return F.conv2d(input, weight, bias, self.stride,
+wandb: Currently logged in as: yara-mohammadi-bahram-1 (yara-mohammadi-bahram-1-ecole-superieure-de-technologie) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: WARNING Changes to your `wandb` environment variables will be ignored because your `wandb` session has already started. For more information on how to modify your settings with `wandb.init()` arguments, please refer to https://wandb.me/wandb-init.
+wandb: Tracking run with wandb version 0.21.2
+wandb: Run data is saved locally in 0_myfiles_face/checkpoint_path/babies_lr5e-8_bs2_dn3_DMD_LOSS_WEIGHT1/wandb/run-20250907_200623-cvzeh18n
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run babies_lr5e-8_bs2_dn3_DMD_LOSS_WEIGHT1
+wandb: ⭐️ View project at https://wandb.ai/yara-mohammadi-bahram-1-ecole-superieure-de-technologie/DMD_unconditional_babies_dmd_weight_ablation
+wandb: 🚀 View run at https://wandb.ai/yara-mohammadi-bahram-1-ecole-superieure-de-technologie/DMD_unconditional_babies_dmd_weight_ablation/runs/cvzeh18n
