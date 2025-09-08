@@ -11,8 +11,6 @@
 #SBATCH --output=0_myfiles_face/slurm/%x-%j.out
 #SBATCH --error=0_myfiles_face/slurm/%x-%j.err
 
-set -e
-
 # Compute canada mode:
 ENV_NAME="dmd2"
 PY_VER="3.10.13"
@@ -58,12 +56,12 @@ export DENOISING_SIGMA_END=0.5
 
 export DFAKE_GEN_UPDATE_RATIO=5
 export CLS_LOSS_WEIGHT=5e-2 # 1e-2
-export GEN_CLS_LOSS_WEIGHT=15e-3 # 3e-3
+export GEN_CLS_LOSS_WEIGHT="${GEN_CLS_LOSS_WEIGHT:-15e-3}" # 3e-3
 export DMD_LOSS_WEIGHT="${DMD_LOSS_WEIGHT:-0.1}"
 export DIFFUSION_GAN_MAX_TIMESTEP=1000
 
-export LOG_ITERS=2500
-export WANDB_ITERS=100
+export LOG_ITERS=500
+export WANDB_ITERS=500
 export MAX_CHECKPOINT=100
 
 export FID_NPZ_ROOT="$PROJECT_PATH/datasets/fid_npz"
@@ -113,7 +111,7 @@ for lr in "${GEN_LRS[@]}"; do
   for bs in "${BATCH_SIZES[@]}"; do
     for dn in "${DENOISE_STEPS[@]}"; do
       
-      export EXPERIMENT_NAME="babies_lr${lr}_bs${bs}_dn${dn}_DMD_LOSS_WEIGHT${DMD_LOSS_WEIGHT}"
+      export EXPERIMENT_NAME="babies_lr${lr}_bs${bs}_dn${dn}_DMD_LOSS_WEIGHT${DMD_LOSS_WEIGHT}_GEN_CLS_LOSS_WEIGHT${GEN_CLS_LOSS_WEIGHT}"
       export OUTPUT_PATH="$PROJECT_PATH/checkpoint_path/$EXPERIMENT_NAME"
       export WANDB_NAME="$EXPERIMENT_NAME"
 

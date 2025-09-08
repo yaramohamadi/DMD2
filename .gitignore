@@ -189,3 +189,7 @@ ignored_cache
 0_myfiles_face/checkpoint_path/*
 
 *.pt
+
+*.png
+*.out
+*.err

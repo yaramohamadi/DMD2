@@ -74,28 +74,19 @@ def best_lock(root: Path):
 
 def copy_checkpoint_as_best(src_ckpt_dir: Path, root: Path, iteration: int, fid_value: float, mode: str = "copy") -> Path:
     """
-    Copy/symlink the entire checkpoint folder to <root>/checkpoint_best atomically.
-    mode='copy' (default) physically copies; mode='link' makes a symlink.
-    Returns the destination Path.
+    Copy src_ckpt_dir to <root>/checkpoint_best directly, NO temp staging.
     """
     dst_dir, _, _ = _best_paths(root)
     dst_dir = Path(dst_dir)
-    tmp = dst_dir.with_suffix(".tmp")
 
-    if mode == "link":
-        # symlink update (zero extra disk)
-        if tmp.exists() or tmp.is_symlink():
-            try: tmp.unlink()
-            except OSError: shutil.rmtree(tmp, ignore_errors=True)
-        os.symlink(src_ckpt_dir, tmp)
-        os.replace(tmp, dst_dir)   # atomic swap
-    else:
-        # physical copy (safe atomic swap)
-        shutil.rmtree(tmp, ignore_errors=True)
-        shutil.copytree(src_ckpt_dir, tmp)
-        os.replace(tmp, dst_dir)   # atomic swap
+    # Remove existing destination
+    if dst_dir.is_symlink():
+        dst_dir.unlink(missing_ok=True)
+    elif dst_dir.exists():
+        shutil.rmtree(dst_dir, ignore_errors=True)
 
-    # also drop a small marker file inside best dir (optional)
+    shutil.copytree(src_ckpt_dir, dst_dir)
+
     try:
         with open(dst_dir / ".BEST_INFO", "w") as f:
             f.write(f"iteration={iteration}\nfid={fid_value:.6f}\nsrc={src_ckpt_dir}\n")
@@ -453,76 +444,76 @@ def evaluate():
                 print(f"[eval_best_once] Could not acquire lock for {target_dir}. Exiting.")
             return
 
-        #try:
-        generator = create_generator(
-            str(ckpt_path / "pytorch_model.bin"),
-            base_model=None  # fresh construct is fine here
-        ).to(accelerator.device)
+        try:
+            generator = create_generator(
+                str(ckpt_path / "pytorch_model.bin"),
+                base_model=None  # fresh construct is fine here
+            ).to(accelerator.device)
 
-        all_images_tensor = sample(accelerator, generator, args, model_index)
-
-
-        # TMP TODO: save numpy for inspection
-        # tmp_npy = os.path.join(folder, f"_tmp_imgs_{model_index:06d}.npy")
-        #print('saving', tmp_npy)
-        #np.save(tmp_npy, all_images_tensor.numpy())
-        #print('saved', tmp_npy)
-        #exit()
-        # TMP TODO: load numpy for testing
-        # Reload mem-mapped to keep RAM down (zero-copy into torch via from_numpy)
-        # print('loading', tmp_npy)
-        # imgs_memmap = np.load(tmp_npy, mmap_mode='r')   # dtype=uint8, shape [N, H, W, 3]
-        # all_images_tensor = torch.from_numpy(imgs_memmap)  # still NHWC uint8, CPU
+            all_images_tensor = sample(accelerator, generator, args, model_index)
 
 
+            # TMP TODO: save numpy for inspection
+            # tmp_npy = os.path.join(folder, f"_tmp_imgs_{model_index:06d}.npy")
+            #print('saving', tmp_npy)
+            #np.save(tmp_npy, all_images_tensor.numpy())
+            #print('saved', tmp_npy)
+            #exit()
+            # TMP TODO: load numpy for testing
+            # Reload mem-mapped to keep RAM down (zero-copy into torch via from_numpy)
+            # print('loading', tmp_npy)
+            # imgs_memmap = np.load(tmp_npy, mmap_mode='r')   # dtype=uint8, shape [N, H, W, 3]
+            # all_images_tensor = torch.from_numpy(imgs_memmap)  # still NHWC uint8, CPU
 
-        # (bugfix) ensure f-string here:
-        n = all_images_tensor.size(0)
-        g = int(np.floor(np.sqrt(min(100, n))))
-        g = max(1, g)
-        grid = all_images_tensor[:g*g].numpy().reshape(g, g, args.resolution, args.resolution, 3)
-        grid = np.swapaxes(grid, 1, 2).reshape(g*args.resolution, g*args.resolution, 3)
-        grid_path = f"grid_{model_index:06d}.png"
-        Image.fromarray(np.ascontiguousarray(grid)).save(grid_path)
 
-        imgs_nchw_f01 = all_images_tensor.permute(0, 3, 1, 2).to(torch.float32) / 255.0
-        ref_npz_path = os.path.join(args.fid_npz_root, f"{args.category}.npz")
-        if accelerator.is_main_process:
-            print(f"[Evaluator] Using FID reference: {ref_npz_path}")
 
-        eval_args = Namespace(**{
-            "device": str(accelerator.device),
-            "category": args.category,
-            "fewshotdataset": args.fewshotdataset,
-            "normalization": True,
-        })
+            # (bugfix) ensure f-string here:
+            n = all_images_tensor.size(0)
+            g = int(np.floor(np.sqrt(min(100, n))))
+            g = max(1, g)
+            grid = all_images_tensor[:g*g].numpy().reshape(g, g, args.resolution, args.resolution, 3)
+            grid = np.swapaxes(grid, 1, 2).reshape(g*args.resolution, g*args.resolution, 3)
+            grid_path = f"grid_{model_index:06d}.png"
+            Image.fromarray(np.ascontiguousarray(grid)).save(grid_path)
 
-        stats = {}
-        if accelerator.is_main_process:
-            evaluator = Evaluator(eval_args, imgs_nchw_f01, ref_npz_path, args.lpips_cluster_size)
-            fid_score = evaluator.calc_fid()
-            prec, rec = evaluator.calc_precision_recall(nearest_k=5)
-            intra_lpips = -1.0 if args.no_lpips else evaluator.calc_intra_lpips()
+            imgs_nchw_f01 = all_images_tensor.permute(0, 3, 1, 2).to(torch.float32) / 255.0
+            ref_npz_path = os.path.join(args.fid_npz_root, f"{args.category}.npz")
+            if accelerator.is_main_process:
+                print(f"[Evaluator] Using FID reference: {ref_npz_path}")
 
-            stats["fid"] = float(fid_score)
-            stats["intra_lpips"] = float(intra_lpips)
-            stats["precision"] = float(prec)
-            stats["recall"] = float(rec)
+            eval_args = Namespace(**{
+                "device": str(accelerator.device),
+                "category": args.category,
+                "fewshotdataset": args.fewshotdataset,
+                "normalization": True,
+            })
 
-            print(f"[eval_best_once] {target_dir} FID {fid_score:.4f} Intra-LPIPS {intra_lpips:.4f}"
-                    f"Precision {prec:.4f} Recall {rec:.4f}") 
+            stats = {}
+            if accelerator.is_main_process:
+                evaluator = Evaluator(eval_args, imgs_nchw_f01, ref_npz_path, args.lpips_cluster_size)
+                fid_score = evaluator.calc_fid()
+                prec, rec = evaluator.calc_precision_recall(nearest_k=5)
+                intra_lpips = -1.0 if args.no_lpips else evaluator.calc_intra_lpips()
 
-            # persist/update stats.json under the same key used in the streaming path
-            overall_stats[target_dir] = stats
-            with open(os.path.join(folder, "stats.json"), "w") as f:
-                json.dump(overall_stats, f, indent=2)
+                stats["fid"] = float(fid_score)
+                stats["intra_lpips"] = float(intra_lpips)
+                stats["precision"] = float(prec)
+                stats["recall"] = float(rec)
 
-        if accelerator.is_main_process:
-            wandb.log(stats, step=model_index if model_index is not None else 0)
+                print(f"[eval_best_once] {target_dir} FID {fid_score:.4f} Intra-LPIPS {intra_lpips:.4f}"
+                        f"Precision {prec:.4f} Recall {rec:.4f}") 
 
-        torch.cuda.empty_cache()
-        #finally:
-        release_eval_lock(ckpt_path)
+                # persist/update stats.json under the same key used in the streaming path
+                overall_stats[target_dir] = stats
+                with open(os.path.join(folder, "stats.json"), "w") as f:
+                    json.dump(overall_stats, f, indent=2)
+
+            if accelerator.is_main_process:
+                wandb.log(stats, step=model_index if model_index is not None else 0)
+
+            torch.cuda.empty_cache()
+        finally:
+            release_eval_lock(ckpt_path)
 
         # EXIT after single evaluation
         return

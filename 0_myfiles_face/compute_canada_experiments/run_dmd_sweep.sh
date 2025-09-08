@@ -1,11 +1,10 @@
 #!/bin/bash
-set -euo pipefail
 
 CHILD="0_myfiles_face/compute_canada_experiments/run_config_babies.sh"   # <-- change to your .sbatch path
 SLURM_LOG_DIR="0_myfiles_face/slurm"
 mkdir -p "$SLURM_LOG_DIR"
 
-for w in 1 0.5 0.25 0.1 0.05; do
+for w in 1 0.01 0.001; do
   tag="dmd$(printf '%s' "$w" | sed 's/\./p/g')"   # e.g., dmd0p5
 
   sbatch \
