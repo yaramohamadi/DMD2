@@ -72,7 +72,9 @@ class dhariwalGuidance(nn.Module):
         #    temp_edm = pickle.load(f)['ema']
 
         # initialize the real unet 
-        self.real_unet = get_edm_network(args).to(accelerator.device)
+        args_teacher = copy.deepcopy(args)
+        args_teacher.label_dim = 0  # unconditional teacher (Only for face dataset it's like this)
+        self.real_unet = get_edm_network(args_teacher).to(accelerator.device)
         self.real_unet = load_pt_with_logs(self.real_unet, args.model_id)  # load the .pt file here
         # self.real_unet.load_state_dict(temp_edm.state_dict(), strict=True)
         self.real_unet.requires_grad_(False)
@@ -80,8 +82,9 @@ class dhariwalGuidance(nn.Module):
         self.real_unet.model.map_augment = None
 
         # initialize the fake unet 
-        self.fake_unet = copy.deepcopy(self.real_unet)
-        self.fake_unet = self.fake_unet.to(accelerator.device)          
+        self.fake_unet = get_edm_network(args).to(accelerator.device)      # label_dim = K+1 for conditional or 0 for unconditional
+        # Load the SAME teacher weights; label-embedding layers will be missing -> filled randomly (forgiving load).
+        self.fake_unet = load_pt_with_logs(self.fake_unet, args.model_id)
         self.fake_unet.requires_grad_(True)
 
         param = next(self.fake_unet.parameters())
@@ -189,11 +192,8 @@ class dhariwalGuidance(nn.Module):
             
             noisy_latents = latents + timestep_sigma.reshape(-1, 1, 1, 1) * noise
 
-            pred_real_image = self.real_unet(noisy_latents, timestep_sigma, labels)
-
-            pred_fake_image = self.fake_unet(
-                noisy_latents, timestep_sigma, labels
-            )
+            pred_real_image = self.real_unet(noisy_latents, timestep_sigma, None) # Teacher = Unconditional for face dataset
+            pred_fake_image = self.fake_unet(noisy_latents, timestep_sigma, labels) # student sees (maybe-null) labels
 
             p_real = (latents - pred_real_image) 
             p_fake = (latents - pred_fake_image) 

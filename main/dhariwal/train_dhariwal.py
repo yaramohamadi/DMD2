@@ -90,6 +90,8 @@ class Trainer:
         self.cache_checkpoints = (args.cache_dir != "")
         self.max_checkpoint = args.max_checkpoint
 
+        self.label_dropout_p = args.label_dropout_p
+
         if args.ckpt_only_path is not None:
             if accelerator.is_main_process:
                 print(f"loading checkpoints without optimizer states from {args.ckpt_only_path}")
@@ -171,6 +173,7 @@ class Trainer:
 
         self.label_dim = args.label_dim
         self.eye_matrix = torch.eye(self.label_dim, device=accelerator.device)
+        self.null_index = self.label_dim - 1 if self.label_dim > 0 else None
         self.delete_ckpts = args.delete_ckpts
         self.max_grad_norm = args.max_grad_norm
 
@@ -326,19 +329,24 @@ class Trainer:
         real_image = real_dict["images"] * 2.0 - 1.0
         if self.label_dim > 0:
             real_label = self.eye_matrix[real_dict["class_labels"].squeeze(dim=1)]
+            # sample valid classes for generator inputs
+            labels = torch.randint(0, self.label_dim - 1, (self.batch_size,), device=accelerator.device)
+            labels = self.eye_matrix[labels]
+            # -------- label dropout -> route to NULL class (no None) --------
+            if self.label_dropout_p > 0.0:
+                if torch.rand(1, device=accelerator.device) < self.label_dropout_p:
+                    labels = self.eye_matrix[self.null_index].expand(self.batch_size, -1)
+                    real_label = self.eye_matrix[self.null_index].expand(self.batch_size, -1)
         else:
             real_label = None
+            labels = None
         real_train_dict = {"real_image": real_image, "real_label": real_label}
 
         scaled_noise = torch.randn(
             self.batch_size, 3, self.resolution, self.resolution, device=accelerator.device
         ) * self.conditioning_sigma
         timestep_sigma = torch.ones(self.batch_size, device=accelerator.device) * self.conditioning_sigma
-        if self.label_dim > 0:
-            labels = torch.randint(0, self.label_dim, (self.batch_size,), device=accelerator.device, dtype=torch.long)
-            labels = self.eye_matrix[labels]
-        else:
-            labels = None
+
 
         COMPUTE_GENERATOR_GRADIENT = self.global_step % self.dfake_gen_update_ratio == 0
         generator_grad_norm = torch.tensor(0.0, device=accelerator.device)
@@ -680,6 +688,8 @@ def parse_args():
     parser.add_argument("--denoising_sigma_end", type=float, default=0.5,
         help="Final (smallest) sigma for the unroll")
     parser.add_argument("--use_bf16", action="store_true")
+    parser.add_argument("--label_dropout_p", type=float, default=0.30, 
+    help="Probability to drop labels for the entire micro-batch (CFG-style).")
     # -----------------------------------------------------------
 
     args = parser.parse_args()

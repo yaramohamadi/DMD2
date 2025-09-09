@@ -180,16 +180,16 @@ def release_eval_lock(ckpt_dir: Path):
     if lock.exists():
         lock.unlink(missing_ok=True)
 
-def create_generator(checkpoint_path, base_model=None):
+def create_generator(checkpoint_path, args, base_model=None):
     if base_model is None:
         # Build a minimal args namespace for the network factory you already have.
         # get_edm_network returns a DhariwalUNetAdapter in your repo.
         args_like = Namespace(
             # use defaults that match your training; adjust if your builder expects more fields
-            resolution=256,
-            img_channels=3,
-            label_dim=0,          # unconditional FFHQ
             use_fp16=False,  # True/False
+            resolution=int(args.resolution),
+            img_channels=3,
+            label_dim=int(args.label_dim),   # <-- match trained model
             model_type="DhariwalUNet",
             model_id=None,        # your builder prints a warning if this is None
             # include any other fields your get_edm_network reads; unused ones are fine
@@ -269,11 +269,29 @@ def sample(accelerator, current_model, args, model_index):
     current_model.eval()
     current_model.float()
 
-    def const_label_zero(B):
-        if Lm == 0:
+    def make_labels(B, step_offset=0):
+        if Lm == 0 or args.label_mode == "uncond":
             return None
+        # number of real classes (exclude NULL if present)
+        K_real   = Lm - 1 if args.has_null else Lm
+        null_idx = Lm - 1 if args.has_null else None
+        # choose class indices
+        if args.label_mode == "uniform":
+            idx = torch.randint(0, K_real, (B,), device=dev)
+        elif args.label_mode == "const":
+            idx = torch.full((B,), int(args.label_index), device=dev)
+        elif args.label_mode == "cycle":
+            start = (step_offset % K_real)
+            idx = (torch.arange(B, device=dev) + start) % K_real
+        elif args.label_mode == "null":
+            if null_idx is None:
+                raise ValueError("label_mode 'null' requires --has_null.")
+            idx = torch.full((B,), null_idx, device=dev)
+        else:
+            raise ValueError(f"Unknown label_mode: {args.label_mode}")
+        # to one-hot
         y = torch.zeros(B, Lm, device=dev, dtype=torch.float32)
-        y[:, 0] = 1.0
+        y.scatter_(1, idx.view(-1,1), 1.0)
         return y
 
     # only rank 0 collects into CPU memory
@@ -289,7 +307,7 @@ def sample(accelerator, current_model, args, model_index):
             # -------- one-step path (existing behavior) --------
             t = torch.full((cur,), args.conditioning_sigma, device=dev)
             noise = torch.randn(cur, 3, args.resolution, args.resolution, device=dev)
-            imgs = current_model(noise * args.conditioning_sigma, t, const_label_zero(cur))  # [-1,1], NCHW
+            imgs = current_model(noise * args.conditioning_sigma, t, make_labels(cur, step_offset=_))  # [-1,1], NCHW
         else:
             # -------- few-step (K-step) unrolled path --------
             K = int(max(1, args.num_denoising_step))
@@ -297,7 +315,7 @@ def sample(accelerator, current_model, args, model_index):
             sigma0 = torch.full((cur,), args.conditioning_sigma, device=dev)
             # initial x is pure noise at sigma0
             x = torch.randn(cur, 3, args.resolution, args.resolution, device=dev) * sigma0.view(-1,1,1,1)
-            y = const_label_zero(cur)
+            y = make_labels(cur, step_offset=_)
 
             # build decreasing schedule [K, B] from sigma0 -> denoising_sigma_end
             sigmas = _make_sigma_schedule(sigma0, K, args.denoising_sigma_end)
@@ -337,7 +355,8 @@ def sample(accelerator, current_model, args, model_index):
             "generated_image_grid": wandb.Image(grid),
             "image_mean": float(all_images_tensor.float().mean().item()),
             "image_std":  float(all_images_tensor.float().std().item()),
-            "eval/label_mode": "constant_zero" if Lm > 0 else "uncond",
+            "eval/label_mode": str(args.label_mode),
+            "eval/has_null": bool(args.has_null),
             "eval/model_label_dim": int(Lm),
         }, step=model_index)
     else:
@@ -345,6 +364,92 @@ def sample(accelerator, current_model, args, model_index):
 
     accelerator.wait_for_everyone()
     return all_images_tensor
+
+
+@torch.no_grad()
+def render_per_class_grid(accelerator, current_model, args, model_index, n_per_class=10):
+    dev = accelerator.device
+    m = getattr(current_model, "module", current_model)
+    Lm = getattr(m, "label_dim", 0)
+    if Lm == 0:
+        return None  # unconditional model -> nothing to do
+
+    K_real   = Lm - 1 if args.has_null else Lm
+    null_idx = (Lm - 1) if args.has_null else None
+
+    current_model.eval(); current_model.float()
+    H = W = int(args.resolution)
+
+    # Helper: generate a row for a fixed class index `c_idx` (0..K_real-1, or NULL)
+    def _row_for_class(c_idx: int) -> torch.Tensor:
+        y = torch.zeros(n_per_class, Lm, device=dev, dtype=torch.float32)
+        y[:, c_idx] = 1.0
+        if (not args.denoising) or (int(args.num_denoising_step) <= 1):
+            t = torch.full((n_per_class,), args.conditioning_sigma, device=dev)
+            z = torch.randn(n_per_class, 3, H, W, device=dev) * args.conditioning_sigma
+            x = current_model(z, t, y)  # [-1,1]
+        else:
+            K = int(max(1, args.num_denoising_step))
+            sigma0 = torch.full((n_per_class,), args.conditioning_sigma, device=dev)
+            x = torch.randn(n_per_class, 3, H, W, device=dev) * sigma0.view(-1,1,1,1)
+            sigmas = _make_sigma_schedule(sigma0, K, args.denoising_sigma_end)
+            last_x0 = None
+            for i in range(K):
+                si = sigmas[i]
+                x0_hat = current_model(x, si, y)  # [-1,1]
+                last_x0 = x0_hat
+                if i + 1 < K:
+                    s_next = sigmas[i + 1]
+                    x = _re_noise(x0_hat, s_next)
+            x = last_x0
+
+        row_u8 = ((x + 1.0) * 127.5).clamp(0, 255).to(torch.uint8).permute(0,2,3,1).contiguous()  # [N,H,W,3]
+        row_u8 = accelerator.gather(row_u8)
+        return row_u8.cpu() if accelerator.is_main_process else None
+
+    # Build rows: all real classes, optionally followed by NULL
+    rows = []
+    row_names = []
+    for c in range(K_real):
+        r = _row_for_class(c)
+        if accelerator.is_main_process:
+            rows.append(r)
+            row_names.append(f"class {c}")
+
+    if args.has_null and (null_idx is not None):
+        r = _row_for_class(null_idx)
+        if accelerator.is_main_process:
+            rows.append(r)
+            row_names.append("NULL")
+
+    if not accelerator.is_main_process:
+        return None
+
+    # Assemble big grid
+    import numpy as np
+    from PIL import Image, ImageDraw
+
+    rows_np = [r.numpy()[:n_per_class] for r in rows]  # trim per rank
+    K_rows  = len(rows_np)
+    canvas  = np.zeros((K_rows*H, n_per_class*W, 3), dtype=np.uint8)
+    for r, row in enumerate(rows_np):
+        for i, img in enumerate(row):
+            y0, x0 = r*H, i*W
+            canvas[y0:y0+H, x0:x0+W] = img
+
+    # Label each row (simple white text; add slight shadow for readability)
+    img = Image.fromarray(canvas)
+    draw = ImageDraw.Draw(img)
+    for r, name in enumerate(row_names):
+        ytxt = r*H + 4
+        # shadow
+        draw.text((5, ytxt+1), name, fill=(0,0,0))
+        # text
+        draw.text((4, ytxt), name, fill=(255,255,255))
+
+    out_path = f"panel_per_class_{model_index:06d}.png"
+    img.save(out_path)
+    return img  # PIL.Image
 
 
 @torch.no_grad()
@@ -358,6 +463,9 @@ def evaluate():
     parser.add_argument("--resolution", type=int, default=256)               # CHANGED: 256
     parser.add_argument("--total_eval_samples", type=int, default=5000)
     parser.add_argument("--label_dim", type=int, default=0)                  # CHANGED: unconditional
+    parser.add_argument("--label_mode", choices=["uncond","uniform","const","cycle","null"], default=None)
+    parser.add_argument("--label_index", type=int, default=0, help="Used with --label_mode const.")
+    parser.add_argument("--has_null", action="store_true", help="Treat last index (label_dim-1) as a NULL class used for marginal sampling.")
     parser.add_argument("--test_visual_batch_size", type=int, default=100)
     parser.add_argument("--seed", type=int, default=10)
     parser.add_argument("--dataset_name", type=str, default="ffhq256")       # CHANGED: ffhq256
@@ -377,9 +485,12 @@ def evaluate():
                         help="K steps; 1 = single-step (current behavior).")
     parser.add_argument("--denoising_sigma_end", type=float, default=0.5,
                         help="Terminal sigma for the unrolled schedule.")
+    
 
 
     args = parser.parse_args()
+    if args.label_mode is None:
+        args.label_mode = "uncond" if args.label_dim == 0 else "uniform"
 
     folder = args.folder
     overall_stats = {}
@@ -447,7 +558,7 @@ def evaluate():
         try:
             generator = create_generator(
                 str(ckpt_path / "pytorch_model.bin"),
-                base_model=None  # fresh construct is fine here
+                args, base_model=None  # fresh construct is fine here
             ).to(accelerator.device)
 
             all_images_tensor = sample(accelerator, generator, args, model_index)
@@ -490,6 +601,12 @@ def evaluate():
 
             stats = {}
             if accelerator.is_main_process:
+
+                # Per-class panel (10 images per class)
+                panel = render_per_class_grid(accelerator, generator, args, model_index, n_per_class=10)
+                if panel is not None:
+                    wandb.log({"panel/per_class": wandb.Image(panel)}, step=model_index)
+
                 evaluator = Evaluator(eval_args, imgs_nchw_f01, ref_npz_path, args.lpips_cluster_size)
                 fid_score = evaluator.calc_fid()
                 prec, rec = evaluator.calc_precision_recall(nearest_k=5)
@@ -556,7 +673,7 @@ def evaluate():
             try:
                 generator = create_generator(
                     str(ckpt_path / "pytorch_model.bin"),
-                    base_model=generator
+                    args, base_model=generator
                 ).to(accelerator.device)
 # 
                 all_images_tensor = sample(accelerator, generator, args, model_index)

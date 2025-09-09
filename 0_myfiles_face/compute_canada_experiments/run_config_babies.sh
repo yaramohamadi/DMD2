@@ -6,39 +6,36 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=80G
 #SBATCH --time=24:00:00
-#SBATCH --mail-user=yara.mohammadi-bahram.1@ens.etsmtl.ca   # <-- put your email here
+#SBATCH --mail-user=yara.mohammadi-bahram.1@ens.etsmtl.ca
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --output=0_myfiles_face/slurm/%x-%j.out
 #SBATCH --error=0_myfiles_face/slurm/%x-%j.err
 
-# Compute canada mode:
 ENV_NAME="dmd2"
 PY_VER="3.10.13"
 module load StdEnv/2023 python/$PY_VER
 module load rust/1.85.0
 module load gcc opencv/4.9.0
 module load arrow/15.0.1
-# --- versions/paths you can tweak ---
-VENV_DIR="${PROJECT:-$HOME}/dmd2_env"  # used only for cc mode
-# 1) venv
+
+VENV_DIR="${PROJECT:-$HOME}/dmd2_env"
 python -m venv "$VENV_DIR"
 source "$VENV_DIR/bin/activate"
 
-REPO_ROOT="/home/ymbahram/projects/def-hadi87/ymbahram/DMD2/DMD2/"
+# REPO_ROOT="/home/ymbahram/projects/def-hadi87/ymbahram/DMD2/DMD2/"
 cd "$REPO_ROOT"
 export PYTHONPATH="$REPO_ROOT:$PYTHONPATH"
-# python -m pip check
 
 # -----------------------
 # Fixed configs
 # -----------------------
-export CUDA_VISIBLE_DEVICES=0,1,2,3 
-export TRAIN_GPUS=0,1,2,3
-export TEST_GPUS=3
-export NPROC_PER_NODE=4
+export CUDA_VISIBLE_DEVICES=0 # ,1,2,3
+export TRAIN_GPUS=0 # ,1,2,3
+export TEST_GPUS=0 #3
+export NPROC_PER_NODE=1 #4
 export NNODES=1
 export MASTER_ADDR=127.0.0.1
-export MASTER_PORT=$(shuf -i 20000-65000 -n 1)   # pick a random free port
+export MASTER_PORT=$(shuf -i 20000-65000 -n 1)
 
 export PROJECT_PATH="0_myfiles_face"
 export CHECKPOINT_INIT="$PROJECT_PATH/checkpoints/ffhq.pt"
@@ -50,18 +47,47 @@ export WANDB_PROJECT="${WANDB_PROJECT:-DMD_unconditional_babies_dmd_weight_ablat
 export TRAIN_ITERS=100000
 export SEED=10
 export RESOLUTION=256
-export LABEL_DIM=0
+
+# For label handling ------------------------------------------------------
+# ---- intent switches (set these per run) ----
+export EXP_TRAIN_MODE="${EXP_TRAIN_MODE:-V0}"   # one of: V0, V1, V2
+export K="${K:-10}"                              # number of real pseudo-classes
+export LABEL_DROPOUT_P="${LABEL_DROPOUT_P:-0.30}"
+
+# V1: Unconditional training and unconditional sampling 
+# V2: Conditional training and conditional sampling
+# V3: Conditional training with null and conditional sampling (But only sampling from classes and not null)
+# Extra option:? sample from null during sampling
+
+# ---- derive training flags ----
+case "$EXP_TRAIN_MODE" in
+  V0)  LABEL_DIM=0;  HAS_NULL_ENABLED=0; LABEL_DROPOUT_P=0.0 ;;
+  V1)  LABEL_DIM=$K; HAS_NULL_ENABLED=0; LABEL_DROPOUT_P=0.0 ;;             # IMPORTANT: keep 0.0 here
+  V2)  LABEL_DIM=$((K+1)); HAS_NULL_ENABLED=1 ;;                             # dropout P used as given
+  *) echo "Unknown EXP_TRAIN_MODE=$EXP_TRAIN_MODE"; exit 1 ;;
+esac
+export LABEL_DIM LABEL_DROPOUT_P
+
+# pass --has_null only when you truly reserved a NULL index
+if [[ "${HAS_NULL_ENABLED}" == "1" ]]; then
+  export HAS_NULL="--has_null"
+else
+  export HAS_NULL=""
+fi
+# ------------------------------------------------------------------------
+
+
 export DATASET_NAME="babies"
 export DENOISING_SIGMA_END=0.5
 
 export DFAKE_GEN_UPDATE_RATIO=5
-export CLS_LOSS_WEIGHT=5e-2 # 1e-2
-export GEN_CLS_LOSS_WEIGHT="${GEN_CLS_LOSS_WEIGHT:-15e-3}" # 3e-3
+export CLS_LOSS_WEIGHT=5e-2
+export GEN_CLS_LOSS_WEIGHT="${GEN_CLS_LOSS_WEIGHT:-15e-3}"
 export DMD_LOSS_WEIGHT="${DMD_LOSS_WEIGHT:-0.1}"
 export DIFFUSION_GAN_MAX_TIMESTEP=1000
 
-export LOG_ITERS=500
-export WANDB_ITERS=500
+export LOG_ITERS=100
+export WANDB_ITERS=100
 export MAX_CHECKPOINT=100
 
 export FID_NPZ_ROOT="$PROJECT_PATH/datasets/fid_npz"
@@ -71,35 +97,26 @@ export EVAL_BATCH_SIZE=4
 export TOTAL_EVAL_SAMPLES=5000
 export CONDITIONING_SIGMA=80.0
 export LPIPS_CLUSTER_SIZE=100
-export NO_LPIPS="" # --no_lpips
+export NO_LPIPS=""  # --no_lpips
 
 export GAN_HEAD_TYPE="global"
 export GAN_HEAD_LAYERS="all"
 export GAN_ADV_LOSS="bce"
 export GAN_MULTIHEAD="--gan_multihead"
 
-export ACCELERATE_LOG_LEVEL=error   # or error
-export TRANSFORMERS_VERBOSITY=error   # optional: quiet transformers too
+export ACCELERATE_LOG_LEVEL=error
+export TRANSFORMERS_VERBOSITY=error
 export OMP_NUM_THREADS=1
 export MKL_NUM_THREADS=1
 export OPENBLAS_NUM_THREADS=1
 
 export DEN_FLAG="--denoising"
 export BEST_FLAG="" # --eval_best_once
-
 export NUM_DENOISING_STEP="${NUM_DENOISING_STEP:-3}"
 
 # -----------------------
 # Sweep ranges
 # -----------------------
-
-# LR 2e-6 -> Batch-size 40 -> Iterations 400k
-# Using linear scaling: 
-# LR 2e-7 -> Batch-size 4 -> Iterations 4M
-# LR 1.5e-7 -> Batch-size 3 -> Iterations 6M
-# LR 1e-7 -> Batch-size 2 -> Iterations 8M
-# LR 5e-8 -> Batch-size 1 -> Iterations 16M
-
 export GEN_LRS=(5e-8)
 export BATCH_SIZES=(2)
 export DENOISE_STEPS=("$NUM_DENOISING_STEP")
@@ -110,8 +127,7 @@ export DENOISE_STEPS=("$NUM_DENOISING_STEP")
 for lr in "${GEN_LRS[@]}"; do
   for bs in "${BATCH_SIZES[@]}"; do
     for dn in "${DENOISE_STEPS[@]}"; do
-      
-      export EXPERIMENT_NAME="babies_lr${lr}_bs${bs}_dn${dn}_DMD_LOSS_WEIGHT${DMD_LOSS_WEIGHT}_GEN_CLS_LOSS_WEIGHT${GEN_CLS_LOSS_WEIGHT}"
+      export EXPERIMENT_NAME="babies_LABELDIM${LABEL_DIM}_LABELDROPOUTP${LABEL_DROPOUT_P}_lr${lr}_bs${bs}_dn${dn}_drop${LABEL_DROPOUT_P}_DMD${DMD_LOSS_WEIGHT}_GClsw${GEN_CLS_LOSS_WEIGHT}${EXTRA_TAG}"
       export OUTPUT_PATH="$PROJECT_PATH/checkpoint_path/$EXPERIMENT_NAME"
       export WANDB_NAME="$EXPERIMENT_NAME"
 
@@ -148,6 +164,8 @@ for lr in "${GEN_LRS[@]}"; do
       CONDITIONING_SIGMA=$CONDITIONING_SIGMA \
       LPIPS_CLUSTER_SIZE=$LPIPS_CLUSTER_SIZE \
       NO_LPIPS=$NO_LPIPS \
+      LABEL_DROPOUT_P=$LABEL_DROPOUT_P \
+      HAS_NULL="$HAS_NULL" \
       bash $PROJECT_PATH/compute_canada_experiments/run_both.sh
 
     done

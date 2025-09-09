@@ -1,5 +1,4 @@
-ba92302c6697076e3cf1b76fb6c11b5ded29fa54
-37efdaf78afc776eece6c9207e21caaff0ede2c3
+export WANDB_API_KEY=37efdaf78afc776eece6c9207e21caaff0ede2c3
 
 wandb whoami
 
