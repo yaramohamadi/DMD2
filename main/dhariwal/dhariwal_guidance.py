@@ -5,6 +5,7 @@ import dnnlib
 import pickle 
 import torch
 import copy 
+from main.dhariwal.dhariwal_network import _map_sigma_to_t, _onehot_to_class_index
 
 # utils
 def _avg_spatial(x):
@@ -81,7 +82,6 @@ class dhariwalGuidance(nn.Module):
         del self.real_unet.model.map_augment
         self.real_unet.model.map_augment = None
 
-        # initialize the fake unet 
         self.fake_unet = get_edm_network(args).to(accelerator.device)      # label_dim = K+1 for conditional or 0 for unconditional
         # Load the SAME teacher weights; label-embedding layers will be missing -> filled randomly (forgiving load).
         self.fake_unet = load_pt_with_logs(self.fake_unet, args.model_id)
@@ -136,7 +136,8 @@ class dhariwalGuidance(nn.Module):
                 x_t = cfac * dummy_x
                 t0 = torch.zeros(1, dtype=torch.long, device=accelerator.device)  # any valid timestep
                 y0 = None if args.label_dim == 0 else torch.zeros(1, args.label_dim, device=accelerator.device)
-                feats = self.fake_unet.extract_multi_scale_features(x_t, t0, y0, self.gan_head_layers)
+                y = _onehot_to_class_index(y0)
+                feats = self.fake_unet.extract_multi_scale_features(x_t, t0, y, self.gan_head_layers)
 
             heads = nn.ModuleDict()
             for name, feat in feats.items():
@@ -297,7 +298,6 @@ class dhariwalGuidance(nn.Module):
         x = image + timestep_sigma.view(-1,1,1,1) * torch.randn_like(image)
 
         # EDM → DDPM mapping for UNet hooks
-        from main.dhariwal.dhariwal_network import _map_sigma_to_t, _onehot_to_class_index
         cfac = 1.0 / torch.sqrt(1.0 + timestep_sigma.view(-1,1,1,1)**2)
         x_t = cfac * x
         t = _map_sigma_to_t(timestep_sigma, self.fake_unet.alphas_cumprod)

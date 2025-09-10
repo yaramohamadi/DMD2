@@ -2,7 +2,7 @@
 #SBATCH --job-name=dmd2_babies_bs3_1gpu
 #SBATCH --account=def-hadi87
 #SBATCH --nodes=1
-#SBATCH --gres=gpu:h100:4
+#SBATCH --gres=gpu:h100:8
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=80G
 #SBATCH --time=24:00:00
@@ -11,38 +11,54 @@
 #SBATCH --output=0_myfiles_face/slurm/%x-%j.out
 #SBATCH --error=0_myfiles_face/slurm/%x-%j.err
 
-ENV_NAME="dmd2"
-PY_VER="3.10.13"
-module load StdEnv/2023 python/$PY_VER
-module load rust/1.85.0
-module load gcc opencv/4.9.0
-module load arrow/15.0.1
+export SERVER="${SERVER:-"cc"}"
+if [[ "$SERVER" != "local" && "$SERVER" != "cc" ]]; then
+  echo "Usage: $0 {local|cc}"
+  exit 1
+fi
+# ---------- LOCAL (conda) ----------
+if [[ "$SERVER" == "cc" ]]; then
 
-VENV_DIR="${PROJECT:-$HOME}/dmd2_env"
-python -m venv "$VENV_DIR"
-source "$VENV_DIR/bin/activate"
+  ENV_NAME="dmd2"
+  PY_VER="3.10.13"
+  module load StdEnv/2023 python/$PY_VER
+  module load rust/1.85.0
+  module load gcc opencv/4.9.0
+  module load arrow/15.0.1
 
-# REPO_ROOT="/home/ymbahram/projects/def-hadi87/ymbahram/DMD2/DMD2/"
-cd "$REPO_ROOT"
-export PYTHONPATH="$REPO_ROOT:$PYTHONPATH"
+  VENV_DIR="${PROJECT:-$HOME}/dmd2_env"
+  python -m venv "$VENV_DIR"
+  source "$VENV_DIR/bin/activate"
+
+  # REPO_ROOT="/home/ymbahram/projects/def-hadi87/ymbahram/DMD2/DMD2/"
+  # cd "$REPO_ROOT"
+  # export PYTHONPATH="$REPO_ROOT:$PYTHONPATH"
+fi
+
+if [[ "$SERVER" == "local" ]]; then
+  echo "Local server environment not yet implemented"
+  exit 1
+fi
 
 # -----------------------
 # Fixed configs
 # -----------------------
-export CUDA_VISIBLE_DEVICES=0 # ,1,2,3
-export TRAIN_GPUS=0 # ,1,2,3
-export TEST_GPUS=0 #3
-export NPROC_PER_NODE=1 #4
-export NNODES=1
+export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1,2,3,4,5,6,7}" # 0,1,2,3
+export TRAIN_GPUS="${TRAIN_GPUS:-0,1,2,3,4,5,6,7}" # 
+export TEST_GPUS="${TEST_GPUS:-7}" #3
+export NPROC_PER_NODE="${NPROC_PER_NODE:-8}" #4
+export NNODES="${NNODES:-1}"
 export MASTER_ADDR=127.0.0.1
 export MASTER_PORT=$(shuf -i 20000-65000 -n 1)
 
 export PROJECT_PATH="0_myfiles_face"
+export DATASET_NAME="${DATASET_NAME:-"babies"}"
 export CHECKPOINT_INIT="$PROJECT_PATH/checkpoints/ffhq.pt"
-export REAL_IMAGE_PATH="$PROJECT_PATH/datasets/targets/10_babies_lmdb"
+export REAL_IMAGE_PATH="$PROJECT_PATH/datasets/targets/10_${DATASET_NAME}_lmdb"
 
 export WANDB_ENTITY="yara-mohammadi-bahram-1-ecole-superieure-de-technologie"
-export WANDB_PROJECT="${WANDB_PROJECT:-DMD_unconditional_babies_dmd_weight_ablation}"
+export WANDB_PROJECT="${WANDB_PROJECT:-"DMD_unconditional_${DATASET_NAME}_dmd_weight_ablation"}"
+export WANDB_API_KEY=37efdaf78afc776eece6c9207e21caaff0ede2c3
 
 export TRAIN_ITERS=100000
 export SEED=10
@@ -76,8 +92,6 @@ else
 fi
 # ------------------------------------------------------------------------
 
-
-export DATASET_NAME="babies"
 export DENOISING_SIGMA_END=0.5
 
 export DFAKE_GEN_UPDATE_RATIO=5
@@ -91,9 +105,8 @@ export WANDB_ITERS=100
 export MAX_CHECKPOINT=100
 
 export FID_NPZ_ROOT="$PROJECT_PATH/datasets/fid_npz"
-export CATEGORY="babies"
-export FEWSHOT_DATASET="$PROJECT_PATH/datasets/targets/10_babies/0"
-export EVAL_BATCH_SIZE=4
+export FEWSHOT_DATASET="$PROJECT_PATH/datasets/targets/10_${DATASET_NAME}/0"
+export EVAL_BATCH_SIZE=8
 export TOTAL_EVAL_SAMPLES=5000
 export CONDITIONING_SIGMA=80.0
 export LPIPS_CLUSTER_SIZE=100
@@ -118,7 +131,7 @@ export NUM_DENOISING_STEP="${NUM_DENOISING_STEP:-3}"
 # Sweep ranges
 # -----------------------
 export GEN_LRS=(5e-8)
-export BATCH_SIZES=(2)
+export BATCH_SIZES=(1)
 export DENOISE_STEPS=("$NUM_DENOISING_STEP")
 
 # -----------------------
@@ -127,7 +140,7 @@ export DENOISE_STEPS=("$NUM_DENOISING_STEP")
 for lr in "${GEN_LRS[@]}"; do
   for bs in "${BATCH_SIZES[@]}"; do
     for dn in "${DENOISE_STEPS[@]}"; do
-      export EXPERIMENT_NAME="babies_LABELDIM${LABEL_DIM}_LABELDROPOUTP${LABEL_DROPOUT_P}_lr${lr}_bs${bs}_dn${dn}_drop${LABEL_DROPOUT_P}_DMD${DMD_LOSS_WEIGHT}_GClsw${GEN_CLS_LOSS_WEIGHT}${EXTRA_TAG}"
+      export EXPERIMENT_NAME="${DATASET_NAME}_LABELDIM${LABEL_DIM}_LABELDROPOUTP${LABEL_DROPOUT_P}_lr${lr}_bs${bs}_dn${dn}_drop${LABEL_DROPOUT_P}_DMD${DMD_LOSS_WEIGHT}_GClsw${GEN_CLS_LOSS_WEIGHT}${EXTRA_TAG}"
       export OUTPUT_PATH="$PROJECT_PATH/checkpoint_path/$EXPERIMENT_NAME"
       export WANDB_NAME="$EXPERIMENT_NAME"
 
@@ -157,7 +170,7 @@ for lr in "${GEN_LRS[@]}"; do
       WANDB_ITERS=$WANDB_ITERS \
       MAX_CHECKPOINT=$MAX_CHECKPOINT \
       FID_NPZ_ROOT=$FID_NPZ_ROOT \
-      CATEGORY=$CATEGORY \
+      CATEGORY=$DATASET_NAME \
       FEWSHOT_DATASET=$FEWSHOT_DATASET \
       EVAL_BATCH_SIZE=$EVAL_BATCH_SIZE \
       TOTAL_EVAL_SAMPLES=$TOTAL_EVAL_SAMPLES \
