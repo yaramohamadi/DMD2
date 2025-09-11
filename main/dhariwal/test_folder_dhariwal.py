@@ -561,6 +561,14 @@ def evaluate():
                 args, base_model=None  # fresh construct is fine here
             ).to(accelerator.device)
 
+
+            if accelerator.is_main_process:
+                # Per-class panel (10 images per class)
+                print("Rendering per class grid...")
+                panel = render_per_class_grid(accelerator, generator, args, model_index, n_per_class=10)
+                if panel is not None:
+                    wandb.log({"panel/per_class": wandb.Image(panel)}, step=model_index)
+
             all_images_tensor = sample(accelerator, generator, args, model_index)
 
 
@@ -601,12 +609,6 @@ def evaluate():
 
             stats = {}
             if accelerator.is_main_process:
-
-                # Per-class panel (10 images per class)
-                panel = render_per_class_grid(accelerator, generator, args, model_index, n_per_class=10)
-                if panel is not None:
-                    wandb.log({"panel/per_class": wandb.Image(panel)}, step=model_index)
-
                 evaluator = Evaluator(eval_args, imgs_nchw_f01, ref_npz_path, args.lpips_cluster_size)
                 fid_score = evaluator.calc_fid()
                 prec, rec = evaluator.calc_precision_recall(nearest_k=5)
