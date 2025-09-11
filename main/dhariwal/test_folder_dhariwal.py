@@ -26,6 +26,7 @@ from contextlib import contextmanager
 from main.dhariwal.dhariwal_network import get_edm_network  # this builds DhariwalUNetAdapter
 from argparse import Namespace
 from main.dhariwal.evaluation_util import Evaluator
+from typing import Optional
 
 torch.set_num_threads(int(os.getenv("OMP_NUM_THREADS", "1")))
 
@@ -95,7 +96,10 @@ def copy_checkpoint_as_best(src_ckpt_dir: Path, root: Path, iteration: int, fid_
 
     return dst_dir
 
-def locate_best_checkpoint_dir(folder: str, overall_stats: dict | None = None) -> str | None:
+def locate_best_checkpoint_dir(
+        folder: str, 
+        overall_stats: Optional[dict] = None
+    ) -> Optional[str]:
     """
     Prefer, in order:
       1) <folder>/checkpoint_best (copy/symlink maintained by evaluator)
@@ -324,6 +328,9 @@ def sample(accelerator, current_model, args, model_index):
             for i in range(K):
                 si = sigmas[i]                     # [B]
                 # predict x0 at this sigma (your Dhariwal adapter returns x0)
+
+                print("Making labels:")
+                print(y)
                 x0_hat = current_model(x, si, y)   # [-1,1], NCHW
                 last_x0 = x0_hat
                 if i + 1 < K:

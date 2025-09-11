@@ -11,7 +11,9 @@
 #SBATCH --output=0_myfiles_face/slurm/%x-%j.out
 #SBATCH --error=0_myfiles_face/slurm/%x-%j.err
 
+
 export SERVER="${SERVER:-"cc"}"
+
 if [[ "$SERVER" != "local" && "$SERVER" != "cc" ]]; then
   echo "Usage: $0 {local|cc}"
   exit 1
@@ -36,9 +38,10 @@ if [[ "$SERVER" == "cc" ]]; then
 fi
 
 if [[ "$SERVER" == "local" ]]; then
-  echo "Local server environment not yet implemented"
-  exit 1
+  conda init bash
+  conda activate dmd2
 fi
+
 
 # -----------------------
 # Fixed configs
@@ -125,7 +128,7 @@ export OPENBLAS_NUM_THREADS=1
 
 export DEN_FLAG="--denoising"
 export BEST_FLAG="" # --eval_best_once
-export NUM_DENOISING_STEP="${NUM_DENOISING_STEP:-3}"
+export NUM_DENOISING_STEP="${NUM_DENOISING_STEP:-2}"
 
 # -----------------------
 # Sweep ranges

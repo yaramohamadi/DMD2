@@ -381,7 +381,8 @@ class Trainer:
 
                     if accelerator.sync_gradients:
                         if self.label_dim > 0:
-                            self._clip_label_embedding(self.model.feedforward_model, max_norm=1.0)
+                            # self._clip_label_embedding(self.model.feedforward_model, max_norm=1.0)
+                            pass
                         generator_grad_norm = torch.nn.utils.clip_grad_norm_(self.model.feedforward_model.parameters(),
                                                                                 self.max_grad_norm)
                         self.optimizer_generator.step()
@@ -414,7 +415,8 @@ class Trainer:
 
                 if accelerator.sync_gradients:
                     if self.label_dim > 0:
-                            self._clip_label_embedding(self.model.guidance_model, max_norm=1.0)
+                            # self._clip_label_embedding(self.model.guidance_model, max_norm=1.0)
+                            pass
                     guidance_grad_norm = accelerator.clip_grad_norm_(self.model.guidance_model.parameters(),
                                                                     self.max_grad_norm)
                     self.optimizer_guidance.step()
