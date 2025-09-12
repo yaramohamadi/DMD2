@@ -99,8 +99,8 @@ fi
 export DENOISING_SIGMA_END=0.5
 
 export DFAKE_GEN_UPDATE_RATIO=5
-export CLS_LOSS_WEIGHT=5e-2
-export GEN_CLS_LOSS_WEIGHT="${GEN_CLS_LOSS_WEIGHT:-15e-3}"
+export CLS_LOSS_WEIGHT=1e-2 # 5e-2
+export GEN_CLS_LOSS_WEIGHT="${GEN_CLS_LOSS_WEIGHT:-3e-3}" #-15e-3
 export DMD_LOSS_WEIGHT="${DMD_LOSS_WEIGHT:-0.1}"
 export DIFFUSION_GAN_MAX_TIMESTEP=1000
 
@@ -135,7 +135,7 @@ export NUM_DENOISING_STEP="${NUM_DENOISING_STEP:-4}"
 # -----------------------
 # Sweep ranges
 # -----------------------
-export GEN_LRS=(2e-6) # Change this back to 5e-8
+export GEN_LRS=(5e-8)
 export BATCH_SIZES=(1)
 export DENOISE_STEPS=("$NUM_DENOISING_STEP")
 

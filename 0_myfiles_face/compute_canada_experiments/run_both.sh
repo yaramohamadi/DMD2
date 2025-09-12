@@ -110,8 +110,8 @@ test_null() {
 train &                  # start training
 TRAIN_PID=$!
 
-#test_stream_conditional &  # start streaming conditional eval
-#TEST_PID=$!
+# test_stream_conditional &  # start streaming conditional eval
+# TEST_PID=$!
 
 # Wait for both to finish 
 # wait $TEST_PID

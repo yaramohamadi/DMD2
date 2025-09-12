@@ -11,8 +11,8 @@ mkdir -p "$SLURM_LOG_DIR"
 
 # ---- Global knobs you may override when calling this script ----
 K="${K:-10}"                                 # number of real pseudo-classes
-NUM_DENOISING_STEP="${NUM_DENOISING_STEP:-4}"
-WANDB_PROJECT="${WANDB_PROJECT:-DMD_babies_V_sweep}"
+NUM_DENOISING_STEP="${NUM_DENOISING_STEP:-3}"
+# WANDB_PROJECT="${WANDB_PROJECT:-DMD_babies_V_sweep}"
 
 # For V2 only: try one or more dropout probabilities
 # Example to sweep: export V2_DROPS="0.2 0.3 0.5"
@@ -31,19 +31,19 @@ run_child() {
   export LABEL_DROPOUT_P="${3:-0.0}"
   export EXTRA_TAG="_${tag}"
   export SERVER="local"
-  export CUDA_VISIBLE_DEVICES=0,1
-  export TRAIN_GPUS=0,1
-  export TEST_GPUS=1
+  export CUDA_VISIBLE_DEVICES=1,2
+  export TRAIN_GPUS=1,2
+  export TEST_GPUS=2
   export NPROC_PER_NODE=2
   export NNODES=1
-  export GRAD_ACCUM_STEPS=5
+  export GRAD_ACCUM_STEPS=1
   # Optional: capture logs like sbatch would
   bash "$CHILD"
 }
 
 # V0: Uncond → Uncond
 # run_child V0 "V0_uncond" 0.0
-run_child V1 "V1_cond_noNull" 0.0
+run_child V0 "V0_uncond" 0.0
 
 # ---------- V0: Uncond → Uncond ----------
 # tag="V0_uncond"
