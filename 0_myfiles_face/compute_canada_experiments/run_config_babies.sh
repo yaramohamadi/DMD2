@@ -114,7 +114,7 @@ export TOTAL_EVAL_SAMPLES=5000
 export CONDITIONING_SIGMA=80.0
 export LPIPS_CLUSTER_SIZE=100
 export NO_LPIPS=""  # --no_lpips
-export USE_BF16="use_bf16" # --use_bf16
+export USE_BF16="--use_bf16" # --use_bf16
 
 export GAN_HEAD_TYPE="global"
 export GAN_HEAD_LAYERS="all"
