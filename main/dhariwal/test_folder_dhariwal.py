@@ -485,6 +485,7 @@ def evaluate():
                         help="K steps; 1 = single-step (current behavior).")
     parser.add_argument("--denoising_sigma_end", type=float, default=0.5,
                         help="Terminal sigma for the unrolled schedule.")
+    parser.add_argument("--use_bf16", action="store_true")
     
 
 
@@ -499,7 +500,7 @@ def evaluate():
     accelerator_project_config = ProjectConfiguration(logging_dir=args.folder)
     accelerator = Accelerator(
         gradient_accumulation_steps=1,
-        mixed_precision="no",
+        mixed_precision="bf16" if args.use_bf16 else "no",
         log_with="wandb",
         project_config=accelerator_project_config
     )

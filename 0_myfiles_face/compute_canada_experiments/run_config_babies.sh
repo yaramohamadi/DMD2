@@ -111,6 +111,7 @@ export TOTAL_EVAL_SAMPLES=5000
 export CONDITIONING_SIGMA=80.0
 export LPIPS_CLUSTER_SIZE=100
 export NO_LPIPS=""  # --no_lpips
+export USE_BF16="use_bf16" # --use_bf16
 
 export GAN_HEAD_TYPE="global"
 export GAN_HEAD_LAYERS="all"
@@ -140,7 +141,7 @@ export DENOISE_STEPS=("$NUM_DENOISING_STEP")
 for lr in "${GEN_LRS[@]}"; do
   for bs in "${BATCH_SIZES[@]}"; do
     for dn in "${DENOISE_STEPS[@]}"; do
-      export EXPERIMENT_NAME="${DATASET_NAME}_LABELDIM${LABEL_DIM}_LABELDROPOUTP${LABEL_DROPOUT_P}_lr${lr}_bs${bs}_dn${dn}_drop${LABEL_DROPOUT_P}_DMD${DMD_LOSS_WEIGHT}_GClsw${GEN_CLS_LOSS_WEIGHT}${EXTRA_TAG}"
+      export EXPERIMENT_NAME="$BF16_{DATASET_NAME}_LABELDIM${LABEL_DIM}_LABELDROPOUTP${LABEL_DROPOUT_P}_lr${lr}_bs${bs}_dn${dn}_drop${LABEL_DROPOUT_P}_DMD${DMD_LOSS_WEIGHT}_GClsw${GEN_CLS_LOSS_WEIGHT}${EXTRA_TAG}"
       export OUTPUT_PATH="$PROJECT_PATH/checkpoint_path/$EXPERIMENT_NAME"
       export WANDB_NAME="$EXPERIMENT_NAME"
 

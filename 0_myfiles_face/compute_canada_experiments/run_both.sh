@@ -44,7 +44,8 @@ train() {
       $GAN_MULTIHEAD \
       --gan_head_type "$GAN_HEAD_TYPE" \
       --gan_head_layers "$GAN_HEAD_LAYERS" \
-      --gan_adv_loss "$GAN_ADV_LOSS"
+      --gan_adv_loss "$GAN_ADV_LOSS" \
+      $USE_BF16
 }
 
 # -----------------------
@@ -71,7 +72,8 @@ test_stream_conditional() {
     $DEN_FLAG \
     --num_denoising_step $NUM_DENOISING_STEP \
     $BEST_FLAG \
-    $NO_LPIPS
+    $NO_LPIPS \
+    $USE_BF16
 }
 
 # -----------------------
