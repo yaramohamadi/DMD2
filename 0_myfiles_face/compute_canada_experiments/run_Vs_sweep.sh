@@ -31,8 +31,8 @@ run_child() {
   export LABEL_DROPOUT_P="${3:-0.0}"
   export EXTRA_TAG="_${tag}"
   export SERVER="local"
-  export CUDA_VISIBLE_DEVICES=0,2
-  export TRAIN_GPUS=0
+  export CUDA_VISIBLE_DEVICES=1,2
+  export TRAIN_GPUS=1
   export TEST_GPUS=2
   export NPROC_PER_NODE=1
   export NNODES=1

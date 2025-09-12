@@ -268,8 +268,7 @@ def sample(accelerator, current_model, args, model_index):
     torch.backends.cudnn.allow_tf32 = True
     torch.backends.cudnn.benchmark = True
 
-    m = getattr(current_model, "module", current_model)
-    Lm = getattr(m, "label_dim", 0)
+    Lm = args.label_dim
     current_model.eval()
     current_model.float()
 
@@ -329,8 +328,6 @@ def sample(accelerator, current_model, args, model_index):
                 si = sigmas[i]                     # [B]
                 # predict x0 at this sigma (your Dhariwal adapter returns x0)
 
-                print("Making labels:")
-                print(y)
                 x0_hat = current_model(x, si, y)   # [-1,1], NCHW
                 last_x0 = x0_hat
                 if i + 1 < K:
@@ -360,11 +357,12 @@ def sample(accelerator, current_model, args, model_index):
 
         wandb.log({
             "generated_image_grid": wandb.Image(grid),
+            "panel/per_class": wandb.Image(panel),
             "image_mean": float(all_images_tensor.float().mean().item()),
             "image_std":  float(all_images_tensor.float().std().item()),
             "eval/label_mode": str(args.label_mode),
-            "eval/has_null": bool(args.has_null),
-            "eval/model_label_dim": int(Lm),
+            "eval/has_null": float(args.has_null),
+            "eval/model_label_dim": float(Lm),
         }, step=model_index)
     else:
         all_images_tensor = torch.empty(0, dtype=torch.uint8)  # non-main returns empty placeholder
@@ -376,10 +374,9 @@ def sample(accelerator, current_model, args, model_index):
 @torch.no_grad()
 def render_per_class_grid(accelerator, current_model, args, model_index, n_per_class=10):
     dev = accelerator.device
-    m = getattr(current_model, "module", current_model)
-    Lm = getattr(m, "label_dim", 0)
+    Lm = args.label_dim
     if Lm == 0:
-        return None  # unconditional model -> nothing to do
+        return None
 
     K_real   = Lm - 1 if args.has_null else Lm
     null_idx = (Lm - 1) if args.has_null else None
@@ -387,30 +384,38 @@ def render_per_class_grid(accelerator, current_model, args, model_index, n_per_c
     current_model.eval(); current_model.float()
     H = W = int(args.resolution)
 
-    # Helper: generate a row for a fixed class index `c_idx` (0..K_real-1, or NULL)
+    # --- FIX: pre-sample fixed noise/timesteps ONCE ---
+    t_fixed = torch.full((n_per_class,), args.conditioning_sigma, device=dev)
+    z_fixed = torch.randn(n_per_class, 3, H, W, device=dev) * args.conditioning_sigma
+
+    use_k = (args.denoising and int(args.num_denoising_step) > 1)
+    if use_k:
+        K = int(max(1, args.num_denoising_step))
+        sigma0_fixed = t_fixed  # matches your code’s usage
+        x_fixed = torch.randn(n_per_class, 3, H, W, device=dev) * sigma0_fixed.view(-1,1,1,1)
+        sigmas_fixed = _make_sigma_schedule(sigma0_fixed, K, args.denoising_sigma_end)
+
     def _row_for_class(c_idx: int) -> torch.Tensor:
         y = torch.zeros(n_per_class, Lm, device=dev, dtype=torch.float32)
         y[:, c_idx] = 1.0
-        if (not args.denoising) or (int(args.num_denoising_step) <= 1):
-            t = torch.full((n_per_class,), args.conditioning_sigma, device=dev)
-            z = torch.randn(n_per_class, 3, H, W, device=dev) * args.conditioning_sigma
-            x = current_model(z, t, y)  # [-1,1]
+
+        if not use_k:
+            # reuse SAME z/t for all classes
+            x = current_model(z_fixed, t_fixed, y)  # [-1,1]
         else:
-            K = int(max(1, args.num_denoising_step))
-            sigma0 = torch.full((n_per_class,), args.conditioning_sigma, device=dev)
-            x = torch.randn(n_per_class, 3, H, W, device=dev) * sigma0.view(-1,1,1,1)
-            sigmas = _make_sigma_schedule(sigma0, K, args.denoising_sigma_end)
+            # start from SAME initial noise for all classes; clone to avoid in-place mutation
+            x = x_fixed.clone()
             last_x0 = None
             for i in range(K):
-                si = sigmas[i]
-                x0_hat = current_model(x, si, y)  # [-1,1]
+                si = sigmas_fixed[i]
+                x0_hat = current_model(x, si, y)
                 last_x0 = x0_hat
                 if i + 1 < K:
-                    s_next = sigmas[i + 1]
+                    s_next = sigmas_fixed[i + 1]
                     x = _re_noise(x0_hat, s_next)
             x = last_x0
 
-        row_u8 = ((x + 1.0) * 127.5).clamp(0, 255).to(torch.uint8).permute(0,2,3,1).contiguous()  # [N,H,W,3]
+        row_u8 = ((x + 1.0) * 127.5).clamp(0, 255).to(torch.uint8).permute(0,2,3,1).contiguous()
         row_u8 = accelerator.gather(row_u8)
         return row_u8.cpu() if accelerator.is_main_process else None
 
@@ -568,13 +573,9 @@ def evaluate():
                 args, base_model=None  # fresh construct is fine here
             ).to(accelerator.device)
 
-
-            if accelerator.is_main_process:
-                # Per-class panel (10 images per class)
-                print("Rendering per class grid...")
-                panel = render_per_class_grid(accelerator, generator, args, model_index, n_per_class=10)
-                if panel is not None:
-                    wandb.log({"panel/per_class": wandb.Image(panel)}, step=model_index)
+            # Per-class panel (10 images per class)
+            print("Rendering per class grid...")
+            panel = render_per_class_grid(accelerator, generator, args, model_index, n_per_class=10)
 
             all_images_tensor = sample(accelerator, generator, args, model_index)
 
@@ -684,7 +685,11 @@ def evaluate():
                     str(ckpt_path / "pytorch_model.bin"),
                     args, base_model=generator
                 ).to(accelerator.device)
-# 
+#               
+                # Per-class panel (10 images per class)
+                print("Rendering per class grid...")
+                panel = render_per_class_grid(accelerator, generator, args, model_index, n_per_class=10)
+
                 all_images_tensor = sample(accelerator, generator, args, model_index)
 
                 #TMP TODO: save numpy for inspection
