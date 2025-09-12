@@ -66,6 +66,7 @@ export WANDB_API_KEY=37efdaf78afc776eece6c9207e21caaff0ede2c3
 export TRAIN_ITERS=100000
 export SEED=10
 export RESOLUTION=256
+export GRAD_ACCUM_STEPS="${GRAD_ACCUM_STEPS:-1}"
 
 # For label handling ------------------------------------------------------
 # ---- intent switches (set these per run) ----
@@ -129,12 +130,12 @@ export OPENBLAS_NUM_THREADS=1
 
 export DEN_FLAG="--denoising"
 export BEST_FLAG="" # --eval_best_once
-export NUM_DENOISING_STEP="${NUM_DENOISING_STEP:-2}"
+export NUM_DENOISING_STEP="${NUM_DENOISING_STEP:-4}"
 
 # -----------------------
 # Sweep ranges
 # -----------------------
-export GEN_LRS=(5e-8)
+export GEN_LRS=(2e-6) # Change this back to 5e-8
 export BATCH_SIZES=(1)
 export DENOISE_STEPS=("$NUM_DENOISING_STEP")
 
@@ -144,7 +145,7 @@ export DENOISE_STEPS=("$NUM_DENOISING_STEP")
 for lr in "${GEN_LRS[@]}"; do
   for bs in "${BATCH_SIZES[@]}"; do
     for dn in "${DENOISE_STEPS[@]}"; do
-      export EXPERIMENT_NAME="$BF16_{DATASET_NAME}_LABELDIM${LABEL_DIM}_LABELDROPOUTP${LABEL_DROPOUT_P}_lr${lr}_bs${bs}_dn${dn}_drop${LABEL_DROPOUT_P}_DMD${DMD_LOSS_WEIGHT}_GClsw${GEN_CLS_LOSS_WEIGHT}${EXTRA_TAG}"
+      export EXPERIMENT_NAME="GRADACUM${GRAD_ACCUM_STEPS}_${DATASET_NAME}_LABELDIM${LABEL_DIM}_LABELDROPOUTP${LABEL_DROPOUT_P}_lr${lr}_bs${bs}_dn${dn}_drop${LABEL_DROPOUT_P}_DMD${DMD_LOSS_WEIGHT}_GClsw${GEN_CLS_LOSS_WEIGHT}${EXTRA_TAG}"
       export OUTPUT_PATH="$PROJECT_PATH/checkpoint_path/$EXPERIMENT_NAME"
       export WANDB_NAME="$EXPERIMENT_NAME"
 

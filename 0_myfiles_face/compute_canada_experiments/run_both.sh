@@ -45,7 +45,8 @@ train() {
       --gan_head_type "$GAN_HEAD_TYPE" \
       --gan_head_layers "$GAN_HEAD_LAYERS" \
       --gan_adv_loss "$GAN_ADV_LOSS" \
-      $USE_BF16
+      $USE_BF16 \
+      --grad_accum_steps "$GRAD_ACCUM_STEPS"
 }
 
 # -----------------------
@@ -109,11 +110,11 @@ test_null() {
 train &                  # start training
 TRAIN_PID=$!
 
-test_stream_conditional &  # start streaming conditional eval
-TEST_PID=$!
+#test_stream_conditional &  # start streaming conditional eval
+#TEST_PID=$!
 
 # Wait for both to finish 
-wait $TEST_PID
+# wait $TEST_PID
 wait $TRAIN_PID
 
 # After training finishes, evaluate best checkpoint with NULL sampling

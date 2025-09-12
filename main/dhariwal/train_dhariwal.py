@@ -22,6 +22,7 @@ import math
 from pathlib import Path
 import shutil
 from collections import defaultdict
+from contextlib import nullcontext
 
 class Trainer:
     def __init__(self, args):
@@ -34,7 +35,7 @@ class Trainer:
         accelerator_project_config = ProjectConfiguration(logging_dir=args.output_path)
 
         accelerator = Accelerator(
-            gradient_accumulation_steps=args.grad_accum_steps,
+            gradient_accumulation_steps=args.grad_accum_steps, # 2 times since for each step, we have 2 models (guidance + generator)
             mixed_precision="bf16" if args.use_bf16 else "no",
             log_with="wandb",
             project_config=accelerator_project_config,
@@ -42,8 +43,6 @@ class Trainer:
         )
 
         set_seed(args.seed + accelerator.process_index)
-
-        print(accelerator.state)
 
         # TODO I removed seed and time from checkpoint path
         # Enable checkpoint resuming and saving in the same wandb run
@@ -232,6 +231,11 @@ class Trainer:
     def _mb_concat_and_gather(self):
         """Concatenate micro-batches and gather across processes for logging/metrics."""
         cat = {}
+
+        if self.accelerator.sync_gradients:
+            n_mb = len(self._mb_tensors.get("generated_image", []))
+            print(f"[DEBUG] micro-batches with generated_image this window: {n_mb} (world_size={self.accelerator.num_processes})")
+
         for k, lst in self._mb_tensors.items():
             if len(lst) > 0:
                 cat[k] = torch.cat(lst, dim=0)                    # [sum_B, ...] across micro-batches
@@ -323,26 +327,26 @@ class Trainer:
             if n.endswith("label_emb.weight"):
                 yield p
 
-    def train_one_step(self):
 
+    def train_one_step(self):
         self.model.train()
         accelerator = self.accelerator
-        accum = self.accelerator.gradient_accumulation_steps
-        self.global_step = self.step // max(1, accum)   # optimizer-step index
+        accum = accelerator.gradient_accumulation_steps
+
+        # Optimizer-step index for this window (clean step numbering for logging)
+        self.global_step = (self.step) // max(1, accum)
 
         # New accumulation window? Clear buffers.
-        if (self.step % max(1, accum)) == 0:
+        if self.accelerator.sync_gradients:
             self._mb_clear()
 
-        # ----- your batch prep (unchanged) -----
+        # ----- batch prep (unchanged) -----
         real_dict = next(self.real_image_dataloader)
         real_image = real_dict["images"] * 2.0 - 1.0
         if self.label_dim > 0:
             real_label = self.eye_matrix[real_dict["class_labels"].squeeze(dim=1)]
-            # sample valid classes for generator inputs
             labels = torch.randint(0, self.label_dim - 1, (self.batch_size,), device=accelerator.device)
             labels = self.eye_matrix[labels]
-            # -------- label dropout -> route to NULL class (no None) --------
             if self.label_dropout_p > 0.0:
                 if torch.rand(1, device=accelerator.device) < self.label_dropout_p:
                     labels = self.eye_matrix[self.null_index].expand(self.batch_size, -1)
@@ -357,48 +361,33 @@ class Trainer:
         ) * self.conditioning_sigma
         timestep_sigma = torch.ones(self.batch_size, device=accelerator.device) * self.conditioning_sigma
 
+        # Stable within the window
+        COMPUTE_GENERATOR_GRADIENT = (self.global_step % self.dfake_gen_update_ratio == 0)
 
-        COMPUTE_GENERATOR_GRADIENT = self.global_step % self.dfake_gen_update_ratio == 0
         generator_grad_norm = torch.tensor(0.0, device=accelerator.device)
+        guidance_grad_norm  = torch.tensor(0.0, device=accelerator.device)
 
-        # =========================
-        #  Generator micro-step(s)
-        # =========================
+        # -------------------------------
+        # Single accumulation gate (GEN)
+        # -------------------------------
         with accelerator.accumulate(self.model.feedforward_model):
-                gen_loss_dict, gen_log_dict = self.model(
-                    scaled_noise, timestep_sigma, labels,
-                    real_train_dict=real_train_dict,
-                    compute_generator_gradient=COMPUTE_GENERATOR_GRADIENT,
-                    generator_turn=True, guidance_turn=False
-                )
-                
-                if COMPUTE_GENERATOR_GRADIENT:
-                    generator_loss = self.dmd_loss_weight * gen_loss_dict["loss_dm"]
-                    if self.gan_classifier:
-                        generator_loss = generator_loss + gen_loss_dict["gen_cls_loss"] * self.gen_cls_loss_weight
+            # ---- Generator turn ----
+            gen_loss_dict, gen_log_dict = self.model(
+                scaled_noise, timestep_sigma, labels,
+                real_train_dict=real_train_dict,
+                compute_generator_gradient=COMPUTE_GENERATOR_GRADIENT,
+                generator_turn=True, guidance_turn=False
+            )
 
-                    accelerator.backward(generator_loss)
+            if COMPUTE_GENERATOR_GRADIENT:
+                generator_loss = self.dmd_loss_weight * gen_loss_dict["loss_dm"]
+                if self.gan_classifier:
+                    generator_loss = generator_loss + gen_loss_dict["gen_cls_loss"] * self.gen_cls_loss_weight
+                accelerator.backward(generator_loss)
 
-                    if accelerator.sync_gradients:
-                        if self.label_dim > 0:
-                            # self._clip_label_embedding(self.model.feedforward_model, max_norm=1.0)
-                            pass
-                        generator_grad_norm = torch.nn.utils.clip_grad_norm_(self.model.feedforward_model.parameters(),
-                                                                                self.max_grad_norm)
-                        self.optimizer_generator.step()
-                        # if we also compute gan loss, the classifier also received gradient 
-                        # zero out guidance model's gradient avoids undesired gradient accumulation
-                        self.optimizer_generator.zero_grad(set_to_none=True)
-                        self.optimizer_guidance.zero_grad(set_to_none=True)
-                        self.scheduler_generator.step()
-                else:
-                    if accelerator.sync_gradients:
-                        self.scheduler_generator.step()
-
-        # =========================
-        #  Guidance micro-step(s)
-        # =========================
-        with accelerator.accumulate(self.model.guidance_model):
+            # ---- Guidance turn (no sync until end of window) ----
+            guid_sync_ctx = nullcontext() if accelerator.sync_gradients else accelerator.no_sync(self.model.guidance_model)
+            with guid_sync_ctx:
                 guid_loss_dict, guid_log_dict = self.model(
                     scaled_noise, timestep_sigma, labels,
                     real_train_dict=real_train_dict,
@@ -406,35 +395,48 @@ class Trainer:
                     generator_turn=False, guidance_turn=True,
                     guidance_data_dict=gen_log_dict.get('guidance_data_dict', None)
                 )
-                
+
                 guidance_loss = guid_loss_dict["loss_fake_mean"]
                 if self.gan_classifier:
                     guidance_loss = guidance_loss + guid_loss_dict["guidance_cls_loss"] * self.cls_loss_weight
-
                 accelerator.backward(guidance_loss)
 
-                if accelerator.sync_gradients:
-                    if self.label_dim > 0:
-                            # self._clip_label_embedding(self.model.guidance_model, max_norm=1.0)
-                            pass
-                    guidance_grad_norm = accelerator.clip_grad_norm_(self.model.guidance_model.parameters(),
-                                                                    self.max_grad_norm)
-                    self.optimizer_guidance.step()
-                    self.optimizer_guidance.zero_grad(set_to_none=True)
-                    self.scheduler_guidance.step()
-                    self.optimizer_generator.zero_grad(set_to_none=True)
-                else:
-                    guidance_grad_norm = torch.tensor(0.0, device=accelerator.device)
+            # ---- Step both once at sync (preserve G then D order) ----
+            if accelerator.sync_gradients:
+                if self.label_dim > 0:
+                    # optional label-emb clipping per-module if you re-enable it
+                    pass
 
-        # ---- merge logs (unchanged except small guards) ----
+                generator_grad_norm = torch.nn.utils.clip_grad_norm_(
+                    self.model.feedforward_model.parameters(), self.max_grad_norm
+                )
+                guidance_grad_norm = accelerator.clip_grad_norm_(
+                    self.model.guidance_model.parameters(), self.max_grad_norm
+                )
+
+                # Step generator then guidance (keep your original order)
+                self.optimizer_generator.step()
+                self.optimizer_generator.zero_grad(set_to_none=True)
+                self.scheduler_generator.step()
+
+                self.optimizer_guidance.step()
+                self.optimizer_guidance.zero_grad(set_to_none=True)
+                self.scheduler_guidance.step()
+
+
+        # ---- safe-merge logs so guidance can’t clobber images ----
+        log_dict = gen_log_dict.copy()
+        for k, v in guid_log_dict.items():
+            if (k not in log_dict) or isinstance(v, torch.Tensor):
+                log_dict[k] = v
         loss_dict = {**gen_loss_dict, **guid_loss_dict}
-        log_dict  = {**gen_log_dict,  **guid_log_dict}
 
         self.log_everything(loss_dict, log_dict, generator_grad_norm, guidance_grad_norm, accum)
 
 
     def train(self):
         accum = self.accelerator.gradient_accumulation_steps
+
         for _ in range(self.step, self.train_iters):
             self.train_one_step()
             # We just finished one micro-step; did we close an accumulation window?
