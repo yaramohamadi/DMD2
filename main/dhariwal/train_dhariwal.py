@@ -381,14 +381,15 @@ class Trainer:
 
                     if accelerator.sync_gradients:
                         if self.label_dim > 0:
-                            self._clip_label_embedding(self.model.feedforward_model, max_norm=1.0)
+                            # self._clip_label_embedding(self.model.feedforward_model, max_norm=1.0)
+                            pass
                         generator_grad_norm = torch.nn.utils.clip_grad_norm_(self.model.feedforward_model.parameters(),
                                                                                 self.max_grad_norm)
                         self.optimizer_generator.step()
                         # if we also compute gan loss, the classifier also received gradient 
                         # zero out guidance model's gradient avoids undesired gradient accumulation
-                        self.optimizer_generator.zero_grad()
-                        self.optimizer_guidance.zero_grad()
+                        self.optimizer_generator.zero_grad(set_to_none=True)
+                        self.optimizer_guidance.zero_grad(set_to_none=True)
                         self.scheduler_generator.step()
                 else:
                     if accelerator.sync_gradients:
@@ -414,13 +415,14 @@ class Trainer:
 
                 if accelerator.sync_gradients:
                     if self.label_dim > 0:
-                            self._clip_label_embedding(self.model.guidance_model, max_norm=1.0)
+                            # self._clip_label_embedding(self.model.guidance_model, max_norm=1.0)
+                            pass
                     guidance_grad_norm = accelerator.clip_grad_norm_(self.model.guidance_model.parameters(),
                                                                     self.max_grad_norm)
                     self.optimizer_guidance.step()
-                    self.optimizer_guidance.zero_grad()
+                    self.optimizer_guidance.zero_grad(set_to_none=True)
                     self.scheduler_guidance.step()
-                    self.optimizer_generator.zero_grad()
+                    self.optimizer_generator.zero_grad(set_to_none=True)
                 else:
                     guidance_grad_norm = torch.tensor(0.0, device=accelerator.device)
 
