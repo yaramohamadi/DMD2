@@ -2,10 +2,10 @@
 #SBATCH --job-name=dmd2_babies_bs3_1gpu
 #SBATCH --account=def-hadi87
 #SBATCH --nodes=1
-#SBATCH --gres=gpu:h100:8
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=80G
-#SBATCH --time=24:00:00
+#SBATCH --gres=gpu:h100:2
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=20G
+#SBATCH --time=60:00:00
 #SBATCH --mail-user=yara.mohammadi-bahram.1@ens.etsmtl.ca
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --output=0_myfiles_face/slurm/%x-%j.out
@@ -30,6 +30,13 @@ if [[ "$SERVER" == "cc" ]]; then
   VENV_DIR="${PROJECT:-$HOME}/dmd2_env"
   python -m venv "$VENV_DIR"
   source "$VENV_DIR/bin/activate"
+
+  # Only for FIR not for NIBI
+  REPO_ROOT="/home/ymbahram/projects/def-hadi87/ymbahram/DMD2/DMD2/"
+  cd "$REPO_ROOT"
+  export PYTHONPATH="$REPO_ROOT:$PYTHONPATH"
+
+  echo "Compute canada activated"
 fi
 
 if [[ "$SERVER" == "local" ]]; then
