@@ -31,12 +31,12 @@ run_child() {
   export LABEL_DROPOUT_P="${3:-0.0}"
   export EXTRA_TAG="_${tag}"
   export SERVER="local"
-  export CUDA_VISIBLE_DEVICES=1,2
-  export TRAIN_GPUS=1,2
-  export TEST_GPUS=2
+  export CUDA_VISIBLE_DEVICES=2,3
+  export TRAIN_GPUS=2,3
+  export TEST_GPUS=3
   export NPROC_PER_NODE=2
   export NNODES=1
-  export GRAD_ACCUM_STEPS=1
+  export GRAD_ACCUM_STEPS=4
   # Optional: capture logs like sbatch would
   bash "$CHILD"
 }

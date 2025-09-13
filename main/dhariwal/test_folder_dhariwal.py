@@ -343,7 +343,7 @@ def sample(accelerator, current_model, args, model_index):
             rank0_chunks.append(gathered.cpu())
             pbar.update(gathered.size(0))
 
-
+    
     if accelerator.is_main_process:
         pbar.close()
         all_images_tensor = torch.cat(rank0_chunks, dim=0)[:total]  # [N, H, W, 3] uint8 on CPU
@@ -357,7 +357,6 @@ def sample(accelerator, current_model, args, model_index):
 
         wandb.log({
             "generated_image_grid": wandb.Image(grid),
-            "panel/per_class": wandb.Image(panel),
             "image_mean": float(all_images_tensor.float().mean().item()),
             "image_std":  float(all_images_tensor.float().std().item()),
             "eval/label_mode": str(args.label_mode),
@@ -573,13 +572,17 @@ def evaluate():
                 str(ckpt_path / "pytorch_model.bin"),
                 args, base_model=None  # fresh construct is fine here
             ).to(accelerator.device)
-
+            
             # Per-class panel (10 images per class)
             print("Rendering per class grid...")
             panel = render_per_class_grid(accelerator, generator, args, model_index, n_per_class=10)
 
-            all_images_tensor = sample(accelerator, generator, args, model_index)
+            if panel is not None:
+                wandb.log({
+                    "panel/per_class": wandb.Image(panel),
+            })
 
+            all_images_tensor = sample(accelerator, generator, args, model_index)
 
             # TMP TODO: save numpy for inspection
             # tmp_npy = os.path.join(folder, f"_tmp_imgs_{model_index:06d}.npy")
@@ -691,6 +694,11 @@ def evaluate():
                 print("Rendering per class grid...")
                 panel = render_per_class_grid(accelerator, generator, args, model_index, n_per_class=10)
 
+                if panel is not None:
+                    wandb.log({
+                        "panel/per_class": wandb.Image(panel),
+                    })
+                    
                 all_images_tensor = sample(accelerator, generator, args, model_index)
 
                 #TMP TODO: save numpy for inspection
