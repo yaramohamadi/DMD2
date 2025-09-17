@@ -693,10 +693,23 @@ def parse_args():
         help='patch = 1x1 conv → HxW map; global = 1x1 conv + GAP → scalar.')
     parser.add_argument('--gan_head_layers', type=str, default='all',
         help='Comma-separated layer names/indices to attach heads, or "all".')
-    parser.add_argument('--gan_adv_loss', default='hinge', choices=['hinge','bce','wgan'],
-        help='Adversarial loss form for each head.')
+
+    # GAN stuff
+    parser.add_argument('--gan_adv_loss', default='hinge',
+    choices=['hinge','bce','wgan','lsgan'],
+    help='Adversarial loss.')
+    parser.add_argument('--hinge_margin', type=float, default=1.0,
+        help='Margin m in hinge loss (max(0, m - D(x)), max(0, m + D(G(z))).')
+    parser.add_argument('--bce_smooth', type=float, default=0.0,
+        help='Label smoothing ε for BCE (real=1-ε, fake/gen=ε).')
+    parser.add_argument('--ls_target_real', type=float, default=1.0)
+    parser.add_argument('--ls_target_fake', type=float, default=0.0)
+    parser.add_argument('--ls_target_gen',  type=float, default=1.0)
+    parser.add_argument('--r1_gamma', type=float, default=0.0,
+        help='R1 regularization weight (applies to non-WGAN losses).')
     parser.add_argument('--wgan_gp_lambda', type=float, default=10.0,
         help='>0 enables WGAN-GP with this lambda (e.g., 10.0).')
+
     parser.add_argument("--grad_accum_steps", type=int, default=1,
         help="Gradient accumulation steps for larger effective batch sizes.")
     parser.add_argument("--denoising", action="store_true",
