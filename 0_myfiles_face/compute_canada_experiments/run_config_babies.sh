@@ -64,7 +64,7 @@ export WANDB_ENTITY="yara-mohammadi-bahram-1-ecole-superieure-de-technologie"
 export WANDB_PROJECT="${WANDB_PROJECT:-"DMD_unconditional_${DATASET_NAME}_dmd_weight_ablation"}"
 export WANDB_API_KEY=37efdaf78afc776eece6c9207e21caaff0ede2c3
 
-export TRAIN_ITERS=100000
+export TRAIN_ITERS=5000
 export SEED=10
 export RESOLUTION=256
 export GRAD_ACCUM_STEPS="${GRAD_ACCUM_STEPS:-4}"

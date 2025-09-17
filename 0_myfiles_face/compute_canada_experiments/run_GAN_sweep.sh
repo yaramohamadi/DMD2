@@ -4,7 +4,7 @@ CHILD="0_myfiles_face/compute_canada_experiments/run_config_babies.sh"
 SLURM_LOG_DIR="0_myfiles_face/slurm"
 mkdir -p "$SLURM_LOG_DIR"
 
-LOSSES=("hinge" "bce" "wgan" "lsgan")
+LOSSES=("wgan" "lsgan" "hinge" "bce")
 WANDB_PROJ="DMD_unconditional_babies_gan_sweep"
 
 for loss in "${LOSSES[@]}"; do
@@ -23,14 +23,16 @@ for loss in "${LOSSES[@]}"; do
       --error="${SLURM_LOG_DIR}/dmd2_babies_${tag}-%j.err" \
       --export=ALL,\
 GAN_ADV_LOSS="$loss",\
+NUM_DENOISING_STEP=3,\
 WANDB_PROJECT="$WANDB_PROJ",\
-EXTRA_TAG="_${tag}"\
+EXTRA_TAG="_${tag}",\
 ${extra_exports} \
       "$CHILD"
   else
     # Local run
     echo "[LOCAL] running GAN loss = $loss"
     GAN_ADV_LOSS="$loss" \
+    NUM_DENOISING_STEP=3 \
     WANDB_PROJECT="$WANDB_PROJ" \
     EXTRA_TAG="_${tag}" \
     ${extra_exports:+${extra_exports//,/ }} \
