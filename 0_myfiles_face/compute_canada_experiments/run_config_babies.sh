@@ -11,7 +11,7 @@
 #SBATCH --output=0_myfiles_face/slurm/%x-%j.out
 #SBATCH --error=0_myfiles_face/slurm/%x-%j.err
 
-export SERVER="${SERVER:-"cc"}"
+export SERVER="${SERVER:-"local"}"
 
 if [[ "$SERVER" != "local" && "$SERVER" != "cc" ]]; then
   echo "Usage: $0 {local|cc}"
@@ -47,6 +47,7 @@ fi
 # -----------------------
 # Fixed configs
 # -----------------------
+
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1}" # 0,1,2,3
 export TRAIN_GPUS="${TRAIN_GPUS:-0,1}" # 
 export TEST_GPUS="${TEST_GPUS:-1}" #3
@@ -54,6 +55,12 @@ export NPROC_PER_NODE="${NPROC_PER_NODE:-2}" #4
 export NNODES="${NNODES:-1}"
 export MASTER_ADDR=127.0.0.1
 export MASTER_PORT=$(shuf -i 20000-65000 -n 1)
+
+export GRAD_ACCUM_STEPS="${GRAD_ACCUM_STEPS:-1}"
+export BATCH_SIZE="${BATCH_SIZE:-1}"
+export EVAL_BATCH_SIZE=1
+export NUM_DENOISING_STEP="${NUM_DENOISING_STEP:-2}"
+export TRAIN_ITERS=50000
 
 export PROJECT_PATH="0_myfiles_face"
 export DATASET_NAME="${DATASET_NAME:-"babies"}"
@@ -64,10 +71,9 @@ export WANDB_ENTITY="yara-mohammadi-bahram-1-ecole-superieure-de-technologie"
 export WANDB_PROJECT="${WANDB_PROJECT:-"DMD_unconditional_${DATASET_NAME}_dmd_weight_ablation"}"
 export WANDB_API_KEY=37efdaf78afc776eece6c9207e21caaff0ede2c3
 
-export TRAIN_ITERS=5000
 export SEED=10
 export RESOLUTION=256
-export GRAD_ACCUM_STEPS="${GRAD_ACCUM_STEPS:-4}"
+
 
 # For label handling ------------------------------------------------------
 # ---- intent switches (set these per run) ----
@@ -111,7 +117,6 @@ export MAX_CHECKPOINT=100
 
 export FID_NPZ_ROOT="$PROJECT_PATH/datasets/fid_npz"
 export FEWSHOT_DATASET="$PROJECT_PATH/datasets/targets/10_${DATASET_NAME}/0"
-export EVAL_BATCH_SIZE=8
 export TOTAL_EVAL_SAMPLES=5000
 export CONDITIONING_SIGMA=80.0
 export LPIPS_CLUSTER_SIZE=100
@@ -131,13 +136,11 @@ export OPENBLAS_NUM_THREADS=1
 
 export DEN_FLAG="--denoising"
 export BEST_FLAG="" #
-export NUM_DENOISING_STEP="${NUM_DENOISING_STEP:-4}"
 
 # -----------------------
 # Sweep ranges
 # -----------------------
 export GEN_LR="${GEN_LR:-5e-8}"
-export BATCH_SIZE="${BATCH_SIZE:-1}"
 
 export EXPERIMENT_NAME="${DATASET_NAME}_lr${GEN_LR}_bs${BATCH_SIZE}_dn${NUM_DENOISING_STEP}_DMD${DMD_LOSS_WEIGHT}_GClsw${GEN_CLS_LOSS_WEIGHT}_${EXTRA_TAG}"
 export OUTPUT_PATH="$PROJECT_PATH/checkpoint_path/$EXPERIMENT_NAME"

@@ -6,6 +6,7 @@ import pickle
 import torch
 import copy 
 from main.dhariwal.dhariwal_network import _map_sigma_to_t, _onehot_to_class_index
+from typing import Tuple
 
 # utils
 def _avg_spatial(x):
@@ -16,7 +17,7 @@ def _gan_losses(
     mode='hinge', 
     hinge_margin: float = 1.0,
     bce_smooth: float = 0.0,
-    ls_targets: tuple[float,float,float] = (1.0, 0.0, 1.0)  # (real, fake, gen)
+    ls_targets: Tuple[float,float,float] = (1.0, 0.0, 1.0)  # (real, fake, gen)
 ):
     # Flatten so it works for [B,1], [B,HW], etc.
     logits_fake = logits_fake.view(logits_fake.size(0), -1)
