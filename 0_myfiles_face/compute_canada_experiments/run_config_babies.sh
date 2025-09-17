@@ -47,10 +47,10 @@ fi
 # -----------------------
 # Fixed configs
 # -----------------------
-export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1,2,3,4,5,6,7}" # 0,1,2,3
-export TRAIN_GPUS="${TRAIN_GPUS:-0,1,2,3,4,5,6,7}" # 
-export TEST_GPUS="${TEST_GPUS:-7}" #3
-export NPROC_PER_NODE="${NPROC_PER_NODE:-8}" #4
+export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1}" # 0,1,2,3
+export TRAIN_GPUS="${TRAIN_GPUS:-0,1}" # 
+export TEST_GPUS="${TEST_GPUS:-1}" #3
+export NPROC_PER_NODE="${NPROC_PER_NODE:-2}" #4
 export NNODES="${NNODES:-1}"
 export MASTER_ADDR=127.0.0.1
 export MASTER_PORT=$(shuf -i 20000-65000 -n 1)

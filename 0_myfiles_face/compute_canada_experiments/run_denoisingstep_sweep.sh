@@ -6,9 +6,9 @@ mkdir -p "$LOGDIR"
 
 # pick the sweep you want
 
-GEN_CLS_LOSS_WEIGHT=(3e-3 15e-3)
-CLS_LOSS_WEIGHT=(1e-3 5e-3)
-GEN_LR=(5e-8)
+GEN_CLS_LOSS_WEIGHT=(3e-3 15e-3 3e-3)
+CLS_LOSS_WEIGHT=(1e-2 5e-2 5e-2)
+GEN_LR=(5e-8 5e-7)
 
 export WANDB_PROJECT="DMD_ABLATE_LR_CLSLOSS"
 
@@ -25,9 +25,8 @@ for lr in "${GEN_LR[@]}"; do
       --job-name="dmd2_babies_${tag}" \
       --output="${LOGDIR}/dmd2_babies_${tag}-%j.out" \
       --error="${LOGDIR}/dmd2_babies_${tag}-%j.err" \
-      --export=ALL,GEN_LR="$lr",GEN_CLS_LOSS_WEIGHT="$glw",CLS_LOSS_WEIGHT="$clw",GRAD_ACCUM_STEPS=2,BATCH_SIZE=2,NUM_DENOISING_STEP=4,CUDA_VISIBLE_DEVICES=0,1,TRAIN_GPUS=0,1,TEST_GPUS=1,NPROC_PER_NODE=2,NNODES=1,EXTRA_TAG="_${tag}" \
+      --export=ALL,GEN_LR="$lr",GEN_CLS_LOSS_WEIGHT="$glw",CLS_LOSS_WEIGHT="$clw",GRAD_ACCUM_STEPS=2,BATCH_SIZE=2,NUM_DENOISING_STEP=4,EXTRA_TAG="_${tag}" \
       "$CHILD"
-    exit 0
   done
 done
 
