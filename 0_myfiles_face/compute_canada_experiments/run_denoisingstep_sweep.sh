@@ -1,40 +1,79 @@
 #!/bin/bash
-# 
+
 CHILD="0_myfiles_face/compute_canada_experiments/run_config_babies.sh"       # <-- point to the sbatch file above
 LOGDIR="0_myfiles_face/slurm"
 mkdir -p "$LOGDIR"
 
-# CUDA_VISIBLE_DEVICES=0,TRAIN_GPUS=0,TEST_GPUS=0,NPROC_PER_NODE=1,NNODES=1
-
 # pick the sweep you want
-STEPS=(4)
 
-for dn in "${STEPS[@]}"; do
-  tag="dn${dn}"
-  sbatch \
-    --job-name="dmd2_babies_${tag}" \
-    --output="${LOGDIR}/dmd2_babies_${tag}-%j.out" \
-    --error="${LOGDIR}/dmd2_babies_${tag}-%j.err" \
-    --export=ALL,NUM_DENOISING_STEP="$dn",EXTRA_TAG="_${tag}" \
-    "$CHILD"
+GEN_CLS_LOSS_WEIGHT=(3e-3 15e-3 3e-3)
+CLS_LOSS_WEIGHT=(1e-2 5e-2 5e-2)
+GEN_LR=(5e-8 5e-7)
+
+export WANDB_PROJECT="DMD_ABLATE_LR_CLSLOSS"
+
+# paired sweep, local runs
+for lr in "${GEN_LR[@]}"; do
+  for i in "${!GEN_CLS_LOSS_WEIGHT[@]}"; do
+    glw="${GEN_CLS_LOSS_WEIGHT[$i]}"
+    clw="${CLS_LOSS_WEIGHT[$i]}"
+    tag="lr${lr}_clw${clw}_glw${glw}"
+
+    echo "[LOCAL] lr=$lr  GEN_CLS_LOSS_WEIGHT=$glw  CLS_LOSS_WEIGHT=$clw  tag=$tag"
+    
+    sbatch \
+      --job-name="dmd2_babies_${tag}" \
+      --output="${LOGDIR}/dmd2_babies_${tag}-%j.out" \
+      --error="${LOGDIR}/dmd2_babies_${tag}-%j.err" \
+      --export=ALL,GEN_LR="$lr",GEN_CLS_LOSS_WEIGHT="$glw",CLS_LOSS_WEIGHT="$clw",GRAD_ACCUM_STEPS=2,BATCH_SIZE=2,NUM_DENOISING_STEP=4,EXTRA_TAG="_${tag}" \
+      "$CHILD"
+  done
 done
 
-#!/bin/bash
+# GEN_CLS_LOSS_WEIGHT=(3e-3 15e-3)
+# CLS_LOSS_WEIGHT=(1e-3 5e-3)
+# GEN_LR=(5e-8)
+# 
+# export WANDB_PROJECT="DMD_ABLATE_LR_CLSLOSS"
+# 
+# # paired sweep, local runs
+# for lr in "${GEN_LR[@]}"; do
+#   for i in "${!GEN_CLS_LOSS_WEIGHT[@]}"; do
+#     glw="${GEN_CLS_LOSS_WEIGHT[$i]}"
+#     clw="${CLS_LOSS_WEIGHT[$i]}"
+#     tag="lr${lr}_clw${clw}_glw${glw}"
+# 
+#     echo "[LOCAL] lr=$lr  GEN_CLS_LOSS_WEIGHT=$glw  CLS_LOSS_WEIGHT=$clw  tag=$tag"
+# 
+#     GEN_LR="$lr" \
+#     GEN_CLS_LOSS_WEIGHT="$glw" \
+#     CLS_LOSS_WEIGHT="$clw" \
+#     GEN_LR="${GEN_LR[0]}" \
+#     GRAD_ACCUM_STEPS=2 \
+#     BATCH_SIZE=2 \
+#     NUM_DENOISING_STEP=4 \
+#     CUDA_VISIBLE_DEVICES=0,1 \
+#     TRAIN_GPUS=0,1 \
+#     TEST_GPUS=1 \
+#     NPROC_PER_NODE=2 \
+#     NNODES=1 \
+#     EXTRA_TAG="_${tag}" \
+#     bash "$CHILD"
+# 
+#     exit 0
+#   done
+# done
 
-# CHILD="0_myfiles_face/compute_canada_experiments/run_config_babies.sh"
+# 
+# CHILD="0_myfiles_face/compute_canada_experiments/run_config_babies.sh"   # point to your script
 # 
 # STEPS=(4)
 # 
-# export CUDA_VISIBLE_DEVICES=0 # ,1,2,3,4,5,6,7
-# export TRAIN_GPUS=0 # ,1,2,3,4,5,6,7
-# export TEST_GPUS=0 # 7
-# export NPROC_PER_NODE=1 #8
-# export NNODES=1
-# 
-# 
 # for dn in "${STEPS[@]}"; do
+#   tag="dn${dn}"
+#   echo "Running with NUM_DENOISING_STEP=$dn"
 # 
-#   echo "[*] Launch ${tag} -> ${out}"
-#   export NUM_DENOISING_STEP="$dn" 
-#   bash "$CHILD"
+#   # Run locally, export variables, redirect logs
+#   NUM_DENOISING_STEP="$dn" EXTRA_TAG="$tag" bash "$CHILD"
 # done
+

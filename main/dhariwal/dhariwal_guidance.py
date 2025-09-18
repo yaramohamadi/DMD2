@@ -6,43 +6,59 @@ import pickle
 import torch
 import copy 
 from main.dhariwal.dhariwal_network import _map_sigma_to_t, _onehot_to_class_index
+from typing import Tuple
 
 # utils
 def _avg_spatial(x):
     return x.mean(dim=(2,3), keepdim=False) if x.ndim == 4 else x  # [B,1,H,W]→[B,1]
 
-def _gan_losses(logits_real, logits_fake, mode='hinge'):
+def _gan_losses(
+    logits_real, logits_fake, 
+    mode='hinge', 
+    hinge_margin: float = 1.0,
+    bce_smooth: float = 0.0,
+    ls_targets: Tuple[float,float,float] = (1.0, 0.0, 1.0)  # (real, fake, gen)
+):
     # Flatten so it works for [B,1], [B,HW], etc.
     logits_fake = logits_fake.view(logits_fake.size(0), -1)
     logits_real_flat = None if logits_real is None else logits_real.view(logits_real.size(0), -1)
 
     if mode == 'wgan':
-        # Critic scores: higher for real than fake.
         d_loss_real = 0.0 if logits_real_flat is None else -logits_real_flat.mean()
         d_loss_fake = logits_fake.mean()
         d_loss = d_loss_real + d_loss_fake
-        g_loss = -logits_fake.mean()  # generator tries to increase critic score
+        g_loss = -logits_fake.mean()
         return d_loss, g_loss
 
     if mode == 'hinge':
-        d_loss_real = 0.0 if logits_real_flat is None else torch.relu(1.0 - logits_real_flat).mean()
-        d_loss_fake = torch.relu(1.0 + logits_fake).mean()
+        m = hinge_margin
+        d_loss_real = 0.0 if logits_real_flat is None else torch.relu(m - logits_real_flat).mean()
+        d_loss_fake = torch.relu(m + logits_fake).mean()
         d_loss = d_loss_real + d_loss_fake
         g_loss = (-logits_fake).mean()
         return d_loss, g_loss
 
+    if mode == 'lsgan':
+        # Least-squares GAN: real→a, fake→b, gen→c
+        a, b, c = ls_targets
+        mse = nn.MSELoss()
+        if logits_real_flat is None:
+            d_loss = mse(torch.sigmoid(logits_fake), torch.full_like(logits_fake, b))
+        else:
+            d_loss = mse(torch.sigmoid(logits_real_flat), torch.full_like(logits_real_flat, a)) \
+                   + mse(torch.sigmoid(logits_fake),      torch.full_like(logits_fake,      b))
+        g_loss = mse(torch.sigmoid(logits_fake), torch.full_like(logits_fake, c))
+        return d_loss, g_loss
+
     # 'bce'
     bce = nn.BCEWithLogitsLoss()
-    zeros_f = torch.zeros_like(logits_fake)
-    ones_f  = torch.ones_like(logits_fake)
-
+    eps = bce_smooth
     if logits_real_flat is None:
-        d_loss = bce(logits_fake, zeros_f)
+        d_loss = bce(logits_fake, torch.zeros_like(logits_fake))
     else:
-        ones_r = torch.ones_like(logits_real_flat)
-        d_loss = bce(logits_real_flat, ones_r) + bce(logits_fake, zeros_f)
-
-    g_loss = bce(logits_fake, ones_f)
+        d_loss = bce(logits_real_flat, torch.full_like(logits_real_flat, 1.0 - eps)) \
+               + bce(logits_fake,      torch.full_like(logits_fake,      0.0 + eps))
+    g_loss = bce(logits_fake, torch.full_like(logits_fake, 1.0 - eps))
     return d_loss, g_loss
 
 
@@ -68,6 +84,13 @@ class dhariwalGuidance(nn.Module):
         self.gan_head_layers = getattr(args, 'gan_head_layers', 'all')
         self.gan_adv_loss = getattr(args, 'gan_adv_loss', 'hinge')
         self.wgan_gp_lambda = getattr(args, 'wgan_gp_lambda', 10.0)  # set >0 to enable GP (e.g., 10.0)
+
+        self.hinge_margin = float(getattr(args, 'hinge_margin', 1.0))
+        self.bce_smooth   = float(getattr(args, 'bce_smooth', 0.0))
+        self.ls_real      = float(getattr(args, 'ls_target_real', 1.0))
+        self.ls_fake      = float(getattr(args, 'ls_target_fake', 0.0))
+        self.ls_gen       = float(getattr(args, 'ls_target_gen', 1.0))
+        self.r1_gamma     = float(getattr(args, 'r1_gamma', 0.0))
 
         # with dnnlib.util.open_url(args.model_id) as f:
         #    temp_edm = pickle.load(f)['ema']
@@ -169,7 +192,21 @@ class dhariwalGuidance(nn.Module):
         self.max_step = int(args.max_step_percent * self.num_train_timesteps)
         # del temp_edm
 
-    
+    # For some GAN-heads we need R1 (Hinge/BCE/LSGAN)
+    def _r1_penalty(self, real_img, real_label):
+        if self.r1_gamma <= 0.0:
+            return torch.tensor(0.0, device=real_img.device, dtype=real_img.dtype)
+        real_img.requires_grad_(True)
+        scores_real = self._critic_score(real_img, real_label)  # [B]
+        grad_real = torch.autograd.grad(
+            outputs=scores_real.sum(),
+            inputs=real_img,
+            create_graph=True, retain_graph=True
+        )[0]
+        penalty = (grad_real.view(grad_real.size(0), -1).pow(2).sum(dim=1)).mean()
+        return 0.5 * self.r1_gamma * penalty
+
+        
     def compute_distribution_matching_loss(
         self, 
         latents,
@@ -349,18 +386,16 @@ class dhariwalGuidance(nn.Module):
     def compute_generator_clean_cls_loss(self, fake_image, fake_labels):
         # Get unified critic score for fake
         scores_fake = self._critic_score(fake_image, fake_labels)  # [B]
-
-        if self.gan_adv_loss == 'wgan':
+        if self.gan_adv_loss in ('wgan','hinge'):
             g_loss = (-scores_fake).mean()
             return {"gen_cls_loss": g_loss}
-
-        if self.gan_adv_loss == 'hinge':
-            g_loss = (-scores_fake).mean()
-            return {"gen_cls_loss": g_loss}
-
-        # 'bce'
-        g_loss = F.binary_cross_entropy_with_logits(
-            scores_fake.view(-1, 1), torch.ones_like(scores_fake.view(-1, 1))
+        # bce or lsgan: reuse helper, no real logits for G
+        _, g_loss = _gan_losses(
+            logits_real=None, logits_fake=scores_fake.view(-1,1),
+            mode=self.gan_adv_loss,
+            hinge_margin=self.hinge_margin,
+            bce_smooth=self.bce_smooth,
+            ls_targets=(self.ls_real, self.ls_fake, self.ls_gen)
         )
         return {"gen_cls_loss": g_loss}
 
@@ -381,15 +416,22 @@ class dhariwalGuidance(nn.Module):
             }
             return {"guidance_cls_loss": d_loss}, log_dict
 
-        # hinge / bce use the generic helper on raw scores
-        d_loss, _ = _gan_losses(scores_real.view(-1, 1), scores_fake.view(-1, 1), mode=self.gan_adv_loss)
+        # hinge/bce/lsgan path
+        d_loss, _ = _gan_losses(
+            scores_real.view(-1,1), scores_fake.view(-1,1),
+            mode=self.gan_adv_loss,
+            hinge_margin=self.hinge_margin,
+            bce_smooth=self.bce_smooth,
+            ls_targets=(self.ls_real, self.ls_fake, self.ls_gen)
+        )
+        r1 = torch.tensor(0.0, device=real_image.device)
+
         log_dict = {
-            # for monitoring, you can keep sigmoid’d versions if you like
-            "pred_realism_on_real": torch.sigmoid(scores_real.view(-1, 1)).squeeze(1).detach(),
-            "pred_realism_on_fake": torch.sigmoid(scores_fake.view(-1, 1)).squeeze(1).detach(),
+            "pred_realism_on_real": torch.sigmoid(scores_real.view(-1,1)).squeeze(1).detach(),
+            "pred_realism_on_fake": torch.sigmoid(scores_fake.view(-1,1)).squeeze(1).detach(),
+            "r1": torch.as_tensor(r1).detach(),
         }
         return {"guidance_cls_loss": d_loss}, log_dict
-
 
 
     def generator_forward(
