@@ -125,7 +125,7 @@ export USE_BF16="--use_bf16" # --use_bf16
 
 export GAN_HEAD_TYPE="global"
 export GAN_HEAD_LAYERS="all"
-export GAN_ADV_LOSS="bce"
+export GAN_ADV_LOSS="${GAN_ADV_LOSS:-bce}"
 export GAN_MULTIHEAD="--gan_multihead"
 
 export ACCELERATE_LOG_LEVEL=error
