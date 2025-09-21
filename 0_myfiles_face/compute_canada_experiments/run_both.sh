@@ -115,7 +115,7 @@ TEST_PID=$!
 
 # Wait for both to finish 
 wait $TEST_PID
-wait $TRAIN_PID
+wait $TRAIN_PIDs
 
 # After training finishes, evaluate best checkpoint with NULL sampling
 # test_best_null
