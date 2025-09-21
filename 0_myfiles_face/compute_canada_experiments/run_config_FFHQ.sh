@@ -44,7 +44,7 @@ if [[ "$SERVER" == "local" ]]; then
   conda activate dmd2
 
   export PYTHONPATH="$PWD/third_party/dhariwal:$PYTHONPATH"
-  
+
 fi
 
 # -----------------------
@@ -121,7 +121,7 @@ export WANDB_ITERS=100
 export MAX_CHECKPOINT=100
 
 export FID_NPZ_ROOT="$PROJECT_PATH/datasets/fid_npz"
-export FEWSHOT_DATASET="$PROJECT_PATH/datasets/targets/10_${DATASET_NAME}/0"
+export FEWSHOT_DATASET="$PROJECT_PATH/datasets/targets/10_babies/0"
 export TOTAL_EVAL_SAMPLES=5000
 export CONDITIONING_SIGMA=80.0
 export LPIPS_CLUSTER_SIZE=100
