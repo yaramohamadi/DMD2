@@ -136,6 +136,7 @@ export OPENBLAS_NUM_THREADS=1
 
 export DEN_FLAG="--denoising"
 export BEST_FLAG="" #
+export CHEKPOINT_PATH="${CHEKPOINT_PATH:""}"
 
 # -----------------------
 # Sweep ranges
