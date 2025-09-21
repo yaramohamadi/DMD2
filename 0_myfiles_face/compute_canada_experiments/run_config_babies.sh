@@ -60,11 +60,9 @@ export GRAD_ACCUM_STEPS="${GRAD_ACCUM_STEPS:-1}"
 export BATCH_SIZE="${BATCH_SIZE:-1}"
 export EVAL_BATCH_SIZE=1
 export NUM_DENOISING_STEP="${NUM_DENOISING_STEP:-3}"
-<<<<<<< HEAD
-export TRAIN_ITERS=50000
-=======
+
 export TRAIN_ITERS=100000
->>>>>>> 01fc2e872ae0aedcbb2c88439354fa52866656ed
+
 
 export PROJECT_PATH="0_myfiles_face"
 export DATASET_NAME="${DATASET_NAME:-"babies"}"
