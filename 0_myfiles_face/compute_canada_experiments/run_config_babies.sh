@@ -42,6 +42,9 @@ fi
 if [[ "$SERVER" == "local" ]]; then
   conda init bash
   conda activate dmd2
+
+  export PYTHONPATH="$PWD/third_party/dhariwal:$PYTHONPATH" 
+
 fi
 
 # -----------------------
