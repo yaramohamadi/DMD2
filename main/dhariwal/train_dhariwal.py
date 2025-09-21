@@ -177,6 +177,7 @@ class Trainer:
         self.max_grad_norm = args.max_grad_norm
 
         if args.checkpoint_path is not None:
+            print("Attempting to resume from intermediate checkpoint....")
             self.load(args.checkpoint_path)
 
         if self.accelerator.is_main_process:

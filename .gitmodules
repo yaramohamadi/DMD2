@@ -1,3 +1,0 @@
-[submodule "third_party/dhariwal"]
-	path = third_party/dhariwal
-	url = https://github.com/yaramohamadi/guided-diffusion
