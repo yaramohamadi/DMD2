@@ -47,7 +47,7 @@ train() {
       --gan_adv_loss "$GAN_ADV_LOSS" \
       $USE_BF16 \
       --grad_accum_steps "$GRAD_ACCUM_STEPS" \
-      $CHECKPOINT_PATH
+      --checkpoint_path "$CHECKPOINT_PATH"
 }
 
 # -----------------------
@@ -110,7 +110,6 @@ test_null() {
 # -----------------------
 train &                  # start training
 TRAIN_PID=$!
-
 test_stream_conditional &  # start streaming conditional eval
 TEST_PID=$!
 

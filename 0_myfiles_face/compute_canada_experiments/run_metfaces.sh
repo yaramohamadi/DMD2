@@ -4,7 +4,6 @@ CHILD="0_myfiles_face/compute_canada_experiments/run_config_babies.sh"       # <
 LOGDIR="0_myfiles_face/slurm"
 mkdir -p "$LOGDIR"
 
-CHEKPOINT_PATH = "0_myfiles_face/checkpoint_path/metfaces_lr5e-8_bs1_dn3_DMD1_GClsw15e-3__lr5e-8_clw5e-2_glw15e-3/checkpoint_model_010300"
 
 GEN_CLS_LOSS_WEIGHT=(15e-3)
 CLS_LOSS_WEIGHT=(5e-2)
@@ -21,12 +20,13 @@ for lr in "${GEN_LR[@]}"; do
 
     echo "[LOCAL] lr=$lr  GEN_CLS_LOSS_WEIGHT=$glw  CLS_LOSS_WEIGHT=$clw  tag=$tag"
 
+    export CHECKPOINT_PATH="0_myfiles_face/checkpoint_path/metfaces_lr5e-8_bs1_dn3_DMD1_GClsw15e-3__lr5e-8_clw5e-2_glw15e-3/checkpoint_model_000800"
     export DATASET_NAME="metfaces"
     export GEN_LR="$lr" 
     export GEN_CLS_LOSS_WEIGHT="$glw" 
     export CLS_LOSS_WEIGHT="$clw" 
     export GEN_LR="${GEN_LR[0]}" 
-    export GRAD_ACCUM_STEPS=3
+    export GRAD_ACCUM_STEPS=4
     export BATCH_SIZE=1
     export NUM_DENOISING_STEP=3 
     export CUDA_VISIBLE_DEVICES=0,1 
