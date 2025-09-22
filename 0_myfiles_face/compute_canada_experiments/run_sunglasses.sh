@@ -31,7 +31,7 @@ for lr in "${GEN_LR[@]}"; do
     export NUM_DENOISING_STEP=3 
     export CUDA_VISIBLE_DEVICES=0,1 
     export TRAIN_GPUS=0,1
-    export TEST_GPUS=1
+    export TEST_GPUS=0
     export NPROC_PER_NODE=2 
     export NNODES=1 
     export EXTRA_TAG="_${tag}" 
