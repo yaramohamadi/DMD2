@@ -46,9 +46,12 @@ train() {
       --gan_head_layers "$GAN_HEAD_LAYERS" \
       --gan_adv_loss "$GAN_ADV_LOSS" \
       $USE_BF16 \
-      --grad_accum_steps "$GRAD_ACCUM_STEPS" \
-      --checkpoint_path "$CHECKPOINT_PATH"
+      --grad_accum_steps "$GRAD_ACCUM_STEPS"
 }
+
+#  \
+#      --checkpoint_path "$CHECKPOINT_PATH"
+
 
 # -----------------------
 # Testing (streaming conditional)
