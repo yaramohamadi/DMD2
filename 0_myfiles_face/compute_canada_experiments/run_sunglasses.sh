@@ -20,7 +20,7 @@ for lr in "${GEN_LR[@]}"; do
 
     echo "[LOCAL] lr=$lr  GEN_CLS_LOSS_WEIGHT=$glw  CLS_LOSS_WEIGHT=$clw  tag=$tag"
 
-    export CHECKPOINT_PATH = "0_myfiles_face/checkpoint_path/metfaces_lr5e-8_bs1_dn3_DMD1_GClsw15e-3__lr5e-8_clw5e-2_glw15e-3/checkpoint_model_015000"
+    export CHECKPOINT_PATH="0_myfiles_face/checkpoint_path/sunglasses_lr5e-8_bs1_dn3_DMD1_GClsw15e-3__lr5e-8_clw5e-2_glw15e-3/checkpoint_model_025000"
     export DATASET_NAME="sunglasses"
     export GEN_LR="$lr" 
     export GEN_CLS_LOSS_WEIGHT="$glw" 

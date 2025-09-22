@@ -108,14 +108,14 @@ test_null() {
 # -----------------------
 # Orchestration
 # -----------------------
-#train &                  # start training
-#TRAIN_PID=$!
+train &                  # start training
+TRAIN_PID=$!
 test_stream_conditional &  # start streaming conditional eval
 TEST_PID=$!
 
 # Wait for both to finish 
 wait $TEST_PID
-#wait $TRAIN_PIDs
+wait $TRAIN_PIDs
 
 # After training finishes, evaluate best checkpoint with NULL sampling
 # test_best_null
