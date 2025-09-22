@@ -109,6 +109,9 @@ test_null() {
     $NO_LPIPS
 }
 
+# temporary change
+a=1
+
 # -----------------------
 # Orchestration
 # -----------------------
