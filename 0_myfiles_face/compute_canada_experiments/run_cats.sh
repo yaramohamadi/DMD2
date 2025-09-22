@@ -9,9 +9,9 @@ GEN_CLS_LOSS_WEIGHT=(15e-3)
 CLS_LOSS_WEIGHT=(5e-2)
 GEN_LR=(5e-8)
 
-export WANDB_PROJECT="SUNGLASSES"
+export WANDB_PROJECT="CAT"
 
-# paired sweep, local runs
+# paired sweep, local runs\
 for lr in "${GEN_LR[@]}"; do
   for i in "${!GEN_CLS_LOSS_WEIGHT[@]}"; do
     glw="${GEN_CLS_LOSS_WEIGHT[$i]}"
@@ -20,8 +20,8 @@ for lr in "${GEN_LR[@]}"; do
 
     echo "[LOCAL] lr=$lr  GEN_CLS_LOSS_WEIGHT=$glw  CLS_LOSS_WEIGHT=$clw  tag=$tag"
 
-    export CHECKPOINT_PATH="0_myfiles_face/checkpoint_path/sunglasses_lr5e-8_bs1_dn3_DMD1_GClsw15e-3__lr5e-8_clw5e-2_glw15e-3/checkpoint_model_025000"
-    export DATASET_NAME="sunglasses"
+    # export CHECKPOINT_PATH="0_myfiles_face/checkpoint_path/metfaces_lr5e-8_bs1_dn3_DMD1_GClsw15e-3__lr5e-8_clw5e-2_glw15e-3/checkpoint_model_000800"
+    export DATASET_NAME="cat"
     export GEN_LR="$lr" 
     export GEN_CLS_LOSS_WEIGHT="$glw" 
     export CLS_LOSS_WEIGHT="$clw" 
@@ -31,7 +31,7 @@ for lr in "${GEN_LR[@]}"; do
     export NUM_DENOISING_STEP=3 
     export CUDA_VISIBLE_DEVICES=0,1 
     export TRAIN_GPUS=0,1
-    export TEST_GPUS=1
+    export TEST_GPUS=0,1
     export NPROC_PER_NODE=2 
     export NNODES=1 
     export EXTRA_TAG="_${tag}" 
