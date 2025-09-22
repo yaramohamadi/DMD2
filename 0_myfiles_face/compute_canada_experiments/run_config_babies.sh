@@ -61,9 +61,9 @@ export MASTER_PORT=$(shuf -i 20000-65000 -n 1)
 
 export GRAD_ACCUM_STEPS="${GRAD_ACCUM_STEPS:-4}"
 export BATCH_SIZE="${BATCH_SIZE:-1}"
-export EVAL_BATCH_SIZE=8
+export EVAL_BATCH_SIZE=1
 export NUM_DENOISING_STEP="${NUM_DENOISING_STEP:-2}"
-export TRAIN_ITERS=100000
+export TRAIN_ITERS=200000
 
 export PROJECT_PATH="0_myfiles_face"
 export DATASET_NAME="${DATASET_NAME:-"babies"}"
