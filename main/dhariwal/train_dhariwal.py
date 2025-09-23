@@ -438,7 +438,8 @@ class Trainer:
     def train(self):
         accum = self.accelerator.gradient_accumulation_steps
 
-        for _ in range(self.step, self.train_iters):
+        for _ in range(self.global_step, self.train_iters):
+
             self.train_one_step()
             # We just finished one micro-step; did we close an accumulation window?
             did_sync = ((self.step + 1) % max(1, accum) == 0)

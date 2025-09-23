@@ -42,9 +42,6 @@ fi
 if [[ "$SERVER" == "local" ]]; then
   conda init bash
   conda activate dmd2
-
-  export PYTHONPATH="$PWD/third_party/dhariwal:$PYTHONPATH"
-
 fi
 
 # -----------------------
@@ -61,15 +58,14 @@ export MASTER_PORT=$(shuf -i 20000-65000 -n 1)
 
 export GRAD_ACCUM_STEPS="${GRAD_ACCUM_STEPS:-1}"
 export BATCH_SIZE="${BATCH_SIZE:-1}"
-export EVAL_BATCH_SIZE=1
-export NUM_DENOISING_STEP="${NUM_DENOISING_STEP:-3}"
-
-export TRAIN_ITERS=200000
+export EVAL_BATCH_SIZE=8
+export NUM_DENOISING_STEP="${NUM_DENOISING_STEP:-2}"
+export TRAIN_ITERS=50000
 
 export PROJECT_PATH="0_myfiles_face"
-export DATASET_NAME="${DATASET_NAME:-"FFHQ"}"
+export DATASET_NAME="${DATASET_NAME:-"babies"}"
 export CHECKPOINT_INIT="$PROJECT_PATH/checkpoints/ffhq.pt"
-export REAL_IMAGE_PATH="$PROJECT_PATH/datasets/targets/${DATASET_NAME}_lmdb"
+export REAL_IMAGE_PATH="$PROJECT_PATH/datasets/targets/10_${DATASET_NAME}_lmdb"
 
 export WANDB_ENTITY="yara-mohammadi-bahram-1-ecole-superieure-de-technologie"
 export WANDB_PROJECT="${WANDB_PROJECT:-"DMD_unconditional_${DATASET_NAME}_dmd_weight_ablation"}"
@@ -120,7 +116,7 @@ export WANDB_ITERS=100
 export MAX_CHECKPOINT=100
 
 export FID_NPZ_ROOT="$PROJECT_PATH/datasets/fid_npz"
-export FEWSHOT_DATASET="$PROJECT_PATH/datasets/targets/10_babies/0"
+export FEWSHOT_DATASET="$PROJECT_PATH/datasets/targets/10_${DATASET_NAME}/0"
 export TOTAL_EVAL_SAMPLES=5000
 export CONDITIONING_SIGMA=80.0
 export LPIPS_CLUSTER_SIZE=100
@@ -130,7 +126,7 @@ export USE_BF16="--use_bf16" # --use_bf16
 export GAN_HEAD_TYPE="global"
 export GAN_HEAD_LAYERS="all"
 export GAN_ADV_LOSS="${GAN_ADV_LOSS:-bce}"
-export GAN_MULTIHEAD="" # --gan_multihead
+export GAN_MULTIHEAD="--gan_multihead"
 
 export ACCELERATE_LOG_LEVEL=error
 export TRANSFORMERS_VERBOSITY=error
