@@ -28,5 +28,5 @@ def resize_in_place(folder, size=(256, 256)):
             print(f"Skipping {fname}: {e}")
 
 if __name__ == "__main__":
-    folder = "0_mystuff_face/datasets/sunglasses/0"
+    folder = "0_myfiles_face/datasets/fid_folders/cat"
     resize_in_place(folder, size=(256, 256))
