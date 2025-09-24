@@ -22,7 +22,7 @@ for lr in "${GEN_LR[@]}"; do
 
     export GEN_LR="2e-6"
     export DMD_LOSS_WEIGHT="1"
-    export CHECKPOINT_PATH="0_myfiles_face/checkpoint_path/FFHQ_distilled_weights/checkpoint_model_050000"
+    export CHECKPOINT_PATH="0_myfiles_face/checkpoint_path/FFHQ_distilled_weights/checkpoint_model_037200"
     export DATASET_NAME="cat"
     export GEN_LR="$lr" 
     export GEN_CLS_LOSS_WEIGHT="$glw" 

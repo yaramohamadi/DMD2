@@ -50,9 +50,6 @@ train() {
       --checkpoint_path "$CHECKPOINT_PATH"
 }
 
-#  \
-#      
-
 
 # -----------------------
 # Testing (streaming conditional)
