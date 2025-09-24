@@ -24,6 +24,63 @@ import shutil
 from collections import defaultdict
 from contextlib import nullcontext
 
+import os, glob, torch
+from collections import OrderedDict
+
+def _strip_module_prefix(sd):
+    if any(k.startswith("module.") for k in sd.keys()):
+        return OrderedDict((k[len("module."):], v) for k, v in sd.items())
+    return sd
+
+def _parse_shard_index(filename: str) -> int:
+    """
+    Returns -1 for the base file (e.g., pytorch_model.bin / model.safetensors),
+    otherwise the numeric suffix for shards (e.g., pytorch_model_1.bin -> 1).
+    """
+    base = os.path.basename(filename)
+    stem, _ext = os.path.splitext(base)         # e.g., "pytorch_model_1", ".bin"
+    parts = stem.split("_")
+    if len(parts) >= 2 and parts[-1].isdigit():
+        return int(parts[-1])
+    return -1  # base
+
+def load_weights_only(checkpoint_dir, model, accelerator=None, strict=False):
+    # collect shards
+    shards = []
+    shards += glob.glob(os.path.join(checkpoint_dir, "pytorch_model*.bin"))
+    shards += glob.glob(os.path.join(checkpoint_dir, "model*.bin"))
+    shards += glob.glob(os.path.join(checkpoint_dir, "*.safetensors"))
+    assert shards, f"No model weight files found in {checkpoint_dir}"
+
+    # sort: base first (index -1), then 0..N (if present)
+    shards = sorted(shards, key=lambda p: (_parse_shard_index(p) != -1, _parse_shard_index(p)))
+
+    # main-process reads first to avoid N disk hits
+    from contextlib import nullcontext
+    ctx = accelerator.main_process_first() if accelerator is not None else nullcontext()
+
+    merged = OrderedDict()
+    with ctx:
+        for f in shards:
+            if f.endswith(".safetensors"):
+                from safetensors.torch import load_file
+                part = load_file(f)
+            else:
+                part = torch.load(f, map_location="cpu")
+            if isinstance(part, dict) and "state_dict" in part and len(part) == 1:
+                part = part["state_dict"]
+            part = _strip_module_prefix(part)
+            merged.update(part)
+
+    target = accelerator.unwrap_model(model) if accelerator is not None else model
+    missing, unexpected = target.load_state_dict(merged, strict=strict)
+    msg = f"[weights-only] Loaded {len(shards)} shard(s) from {checkpoint_dir} | missing={len(missing)} unexpected={len(unexpected)}"
+    (accelerator.print if accelerator is not None else print)(msg)
+    return missing, unexpected
+
+
+
+
 class Trainer:
     def __init__(self, args):
 
@@ -254,14 +311,21 @@ class Trainer:
 
     def load(self, checkpoint_path):
         # Expecting directories like .../checkpoint_model_000123
-        self.global_step = int(checkpoint_path.rstrip("/").split("_")[-1])
-        accum = self.accelerator.gradient_accumulation_steps
-        
-        print("loading a previous checkpoints including optimizer and random seed")
-        print(self.accelerator.load_state(checkpoint_path, strict=False))
-        self.accelerator.print(f"Loaded checkpoint from {checkpoint_path}")
-        self.global_step += 1
-        self.step = self.global_step * max(1, accum)  # micro-step counter aligned to optimizer step
+        #self.global_step = int(checkpoint_path.rstrip("/").split("_")[-1])
+        #accum = self.accelerator.gradient_accumulation_steps
+        #
+        #print("loading a previous checkpoints including optimizer and random seed")
+        #print(self.accelerator.load_state(checkpoint_path, strict=False))
+        #self.accelerator.print(f"Loaded checkpoint from {checkpoint_path}")
+        #self.global_step += 1
+        #self.step = self.global_step * max(1, accum)  # micro-step counter aligned to optimizer step
+
+        # weights-only resume
+        load_weights_only(checkpoint_path, self.model, accelerator=self.accelerator, strict=False)
+        # self.rebuild_optimizer_and_scheduler()  # recreate fresh opt/sched
+        self.global_step = 0
+        self.step = 0
+        self.accelerator.print("Resumed weights-only; optimizer/scheduler reset.")
 
     def save(self):
         run_root = Path(self.output_path)
