@@ -42,6 +42,9 @@ fi
 if [[ "$SERVER" == "local" ]]; then
   conda init bash
   conda activate dmd2
+
+  export PYTHONPATH="$PWD/third_party/dhariwal:$PYTHONPATH" 
+
 fi
 
 # -----------------------
@@ -56,11 +59,13 @@ export NNODES="${NNODES:-1}"
 export MASTER_ADDR=127.0.0.1
 export MASTER_PORT=$(shuf -i 20000-65000 -n 1)
 
-export GRAD_ACCUM_STEPS="${GRAD_ACCUM_STEPS:-1}"
+export GRAD_ACCUM_STEPS="${GRAD_ACCUM_STEPS:-4}"
 export BATCH_SIZE="${BATCH_SIZE:-1}"
 export EVAL_BATCH_SIZE=1
-export NUM_DENOISING_STEP="${NUM_DENOISING_STEP:-2}"
-export TRAIN_ITERS=50000
+export NUM_DENOISING_STEP="${NUM_DENOISING_STEP:-3}"
+
+export TRAIN_ITERS=400000
+
 
 export PROJECT_PATH="0_myfiles_face"
 export DATASET_NAME="${DATASET_NAME:-"babies"}"
@@ -136,6 +141,7 @@ export OPENBLAS_NUM_THREADS=1
 
 export DEN_FLAG="--denoising"
 export BEST_FLAG="" #
+export CHECKPOINT_PATH="${CHECKPOINT_PATH:-}"
 
 # -----------------------
 # Sweep ranges

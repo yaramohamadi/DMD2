@@ -177,6 +177,7 @@ class Trainer:
         self.max_grad_norm = args.max_grad_norm
 
         if args.checkpoint_path is not None:
+            print("Attempting to resume from intermediate checkpoint....")
             self.load(args.checkpoint_path)
 
         if self.accelerator.is_main_process:
@@ -437,7 +438,8 @@ class Trainer:
     def train(self):
         accum = self.accelerator.gradient_accumulation_steps
 
-        for _ in range(self.step, self.train_iters):
+        for _ in range(self.global_step, self.train_iters):
+
             self.train_one_step()
             # We just finished one micro-step; did we close an accumulation window?
             did_sync = ((self.step + 1) % max(1, accum) == 0)
