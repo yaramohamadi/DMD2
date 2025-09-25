@@ -7,7 +7,7 @@ mkdir -p "$LOGDIR"
 
 GEN_CLS_LOSS_WEIGHT=(15e-3)
 CLS_LOSS_WEIGHT=(5e-2)
-GEN_LR=(5e-8)
+GEN_LR=(2e-6)
 
 export WANDB_PROJECT="CAT_FFHQ_distilled"
 
@@ -19,8 +19,6 @@ for lr in "${GEN_LR[@]}"; do
     tag="lr${lr}_clw${clw}_glw${glw}"
 
     echo "[LOCAL] lr=$lr  GEN_CLS_LOSS_WEIGHT=$glw  CLS_LOSS_WEIGHT=$clw  tag=$tag"
-
-    export GEN_LR="2e-6"
     export DMD_LOSS_WEIGHT="0.01"
     export CHECKPOINT_PATH="0_myfiles_face/checkpoint_path/FFHQ_distilled_weights/checkpoint_model_037200"
     export DATASET_NAME="cat"
