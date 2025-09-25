@@ -66,7 +66,6 @@ export NUM_DENOISING_STEP="${NUM_DENOISING_STEP:-3}"
 
 export TRAIN_ITERS=200000
 
-
 export PROJECT_PATH="0_myfiles_face"
 export DATASET_NAME="${DATASET_NAME:-"FFHQ"}"
 export CHECKPOINT_INIT="$PROJECT_PATH/checkpoints/ffhq.pt"

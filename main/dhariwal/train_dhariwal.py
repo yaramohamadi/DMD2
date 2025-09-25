@@ -24,6 +24,84 @@ import shutil
 from collections import defaultdict
 from contextlib import nullcontext
 
+import os, glob, torch
+from collections import OrderedDict
+
+def _strip_module_prefix(sd):
+    if any(k.startswith("module.") for k in sd.keys()):
+        return OrderedDict((k[len("module."):], v) for k, v in sd.items())
+    return sd
+
+def _parse_shard_index(filename: str) -> int:
+    """
+    Returns -1 for the base file (e.g., pytorch_model.bin / model.safetensors),
+    otherwise the numeric suffix for shards (e.g., pytorch_model_1.bin -> 1).
+    """
+    base = os.path.basename(filename)
+    stem, _ext = os.path.splitext(base)         # e.g., "pytorch_model_1", ".bin"
+    parts = stem.split("_")
+    if len(parts) >= 2 and parts[-1].isdigit():
+        return int(parts[-1])
+    return -1  # base
+
+def remap_key(k: str) -> str:
+    # Handle source → target mapping
+    if k.startswith("real_unet."):
+        return "guidance_model.module.real_unet." + k[len("real_unet."):]
+    if k.startswith("fake_unet."):
+        return "guidance_model.module.fake_unet." + k[len("fake_unet."):]
+    if k.startswith("unet."):
+        return "feedforward_model.module.unet." + k[len("unet."):]
+    if k.startswith("model."):
+        return "feedforward_model.module.model." + k[len("model."):]
+    if k.startswith("karras_sigmas"):
+        return "guidance_model.module.karras_sigmas" + k[len("karras_sigmas"):]
+    return k  # unchanged
+
+def load_weights_only(checkpoint_dir, model, accelerator=None, strict=False):
+    # collect shards
+    shards = []
+    shards += glob.glob(os.path.join(checkpoint_dir, "pytorch_model*.bin"))
+    shards += glob.glob(os.path.join(checkpoint_dir, "model*.bin"))
+    shards += glob.glob(os.path.join(checkpoint_dir, "*.safetensors"))
+    assert shards, f"No model weight files found in {checkpoint_dir}"
+
+    # sort: base first (index -1), then 0..N (if present)
+    shards = sorted(shards, key=lambda p: (_parse_shard_index(p) != -1, _parse_shard_index(p)))
+
+    from contextlib import nullcontext
+    ctx = accelerator.main_process_first() if accelerator is not None else nullcontext()
+
+    merged = OrderedDict()
+    with ctx:
+        for f in shards:
+            if f.endswith(".safetensors"):
+                from safetensors.torch import load_file
+                part = load_file(f)
+            else:
+                part = torch.load(f, map_location="cpu")
+            if isinstance(part, dict) and "state_dict" in part and len(part) == 1:
+                part = part["state_dict"]
+            part = _strip_module_prefix(part)
+            # apply remap
+            remapped = OrderedDict((remap_key(k), v) for k, v in part.items())
+            merged.update(remapped)
+
+    target = accelerator.unwrap_model(model) if accelerator is not None else model
+    
+    missing, unexpected = target.load_state_dict(merged, strict=strict)
+    msg = (f"[weights-only] Loaded {len(shards)} shard(s) from {checkpoint_dir} "
+           f"| missing={len(missing)} unexpected={len(unexpected)}")
+    (accelerator.print if accelerator is not None else print)(msg)
+
+    # Optional: dump a few of the missing/unexpected for debugging
+    if missing: print("Missing sample:", missing)
+    if unexpected: print("Unexpected sample:", unexpected)
+
+    return missing, unexpected
+
+
+
 class Trainer:
     def __init__(self, args):
 
@@ -47,17 +125,17 @@ class Trainer:
         # TODO I removed seed and time from checkpoint path
         # Enable checkpoint resuming and saving in the same wandb run
         if accelerator.is_main_process:
-            if args.checkpoint_path is not None:
-                # Resume into the SAME run folder (parent of the checkpoint directory)
-                resume_run_dir = os.path.dirname(args.checkpoint_path.rstrip("/"))
-                self.output_path = resume_run_dir
-                os.makedirs(self.output_path, exist_ok=True)
-            else:
+            #if args.checkpoint_path is not None:
+            #    # Resume into the SAME run folder (parent of the checkpoint directory)
+            #    resume_run_dir = os.path.dirname(args.checkpoint_path.rstrip("/"))
+            #    self.output_path = resume_run_dir
+            #    os.makedirs(self.output_path, exist_ok=True)
+            #else:
                 # fresh run
-                self.run_id = int(time.time())
-                output_path = os.path.join(args.output_path)
-                os.makedirs(output_path, exist_ok=True)
-                self.output_path = output_path
+            self.run_id = int(time.time())
+            output_path = os.path.join(args.output_path)
+            os.makedirs(output_path, exist_ok=True)
+            self.output_path = output_path
 
             if args.cache_dir != "":
                 if args.checkpoint_path is not None:
@@ -179,6 +257,7 @@ class Trainer:
         if args.checkpoint_path is not None:
             print("Attempting to resume from intermediate checkpoint....")
             self.load(args.checkpoint_path)
+            args.checkpoint_path = None  # create a new directory for continued training
 
         if self.accelerator.is_main_process:
             run = wandb.init(config=args, dir=self.output_path, **{"mode": "online", "entity": args.wandb_entity, "project": args.wandb_project})
@@ -260,8 +339,14 @@ class Trainer:
         print("loading a previous checkpoints including optimizer and random seed")
         print(self.accelerator.load_state(checkpoint_path, strict=False))
         self.accelerator.print(f"Loaded checkpoint from {checkpoint_path}")
-        self.global_step += 1
         self.step = self.global_step * max(1, accum)  # micro-step counter aligned to optimizer step
+
+        # weights-only resume
+        # load_weights_only(checkpoint_path, self.model, accelerator=self.accelerator, strict=False)
+        # self.global_step = int(checkpoint_path.rstrip("/").split("_")[-1]) + 1
+        # accum = self.accelerator.gradient_accumulation_steps
+        # self.step = self.global_step * max(1, accum)  # micro-step counter aligned to optimizer step
+        # self.accelerator.print("Resumed weights-only; optimizer/scheduler reset.")
 
     def save(self):
         run_root = Path(self.output_path)
