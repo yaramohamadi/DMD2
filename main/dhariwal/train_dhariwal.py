@@ -104,17 +104,17 @@ class Trainer:
         # TODO I removed seed and time from checkpoint path
         # Enable checkpoint resuming and saving in the same wandb run
         if accelerator.is_main_process:
-            if args.checkpoint_path is not None:
-                # Resume into the SAME run folder (parent of the checkpoint directory)
-                resume_run_dir = os.path.dirname(args.checkpoint_path.rstrip("/"))
-                self.output_path = resume_run_dir
-                os.makedirs(self.output_path, exist_ok=True)
-            else:
+            #if args.checkpoint_path is not None:
+            #    # Resume into the SAME run folder (parent of the checkpoint directory)
+            #    resume_run_dir = os.path.dirname(args.checkpoint_path.rstrip("/"))
+            #    self.output_path = resume_run_dir
+            #    os.makedirs(self.output_path, exist_ok=True)
+            #else:
                 # fresh run
-                self.run_id = int(time.time())
-                output_path = os.path.join(args.output_path)
-                os.makedirs(output_path, exist_ok=True)
-                self.output_path = output_path
+            self.run_id = int(time.time())
+            output_path = os.path.join(args.output_path)
+            os.makedirs(output_path, exist_ok=True)
+            self.output_path = output_path
 
             if args.cache_dir != "":
                 if args.checkpoint_path is not None:
@@ -311,21 +311,20 @@ class Trainer:
 
     def load(self, checkpoint_path):
         # Expecting directories like .../checkpoint_model_000123
-        #self.global_step = int(checkpoint_path.rstrip("/").split("_")[-1])
-        #accum = self.accelerator.gradient_accumulation_steps
-        #
-        #print("loading a previous checkpoints including optimizer and random seed")
+        self.global_step = int(checkpoint_path.rstrip("/").split("_")[-1])
+        accum = self.accelerator.gradient_accumulation_steps
+    
+        print("loading a previous checkpoints including optimizer and random seed")
         #print(self.accelerator.load_state(checkpoint_path, strict=False))
         #self.accelerator.print(f"Loaded checkpoint from {checkpoint_path}")
-        #self.global_step += 1
-        #self.step = self.global_step * max(1, accum)  # micro-step counter aligned to optimizer step
 
         # weights-only resume
         load_weights_only(checkpoint_path, self.model, accelerator=self.accelerator, strict=False)
-        # self.rebuild_optimizer_and_scheduler()  # recreate fresh opt/sched
-        self.global_step = 0
-        self.step = 0
         self.accelerator.print("Resumed weights-only; optimizer/scheduler reset.")
+
+        self.global_step += 1
+        self.step = self.global_step * max(1, accum)  # micro-step counter aligned to optimizer step
+
 
     def save(self):
         run_root = Path(self.output_path)
