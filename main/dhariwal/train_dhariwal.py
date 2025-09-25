@@ -125,12 +125,12 @@ class Trainer:
         # TODO I removed seed and time from checkpoint path
         # Enable checkpoint resuming and saving in the same wandb run
         if accelerator.is_main_process:
-            if args.checkpoint_path is not None:
-                # Resume into the SAME run folder (parent of the checkpoint directory)
-                resume_run_dir = os.path.dirname(args.checkpoint_path.rstrip("/"))
-                self.output_path = resume_run_dir
-                os.makedirs(self.output_path, exist_ok=True)
-            else:
+            #if args.checkpoint_path is not None:
+            #    # Resume into the SAME run folder (parent of the checkpoint directory)
+            #    resume_run_dir = os.path.dirname(args.checkpoint_path.rstrip("/"))
+            #    self.output_path = resume_run_dir
+            #    os.makedirs(self.output_path, exist_ok=True)
+            #else:
                 # fresh run
                 self.run_id = int(time.time())
                 output_path = os.path.join(args.output_path)
@@ -257,6 +257,7 @@ class Trainer:
         if args.checkpoint_path is not None:
             print("Attempting to resume from intermediate checkpoint....")
             self.load(args.checkpoint_path)
+            args.checkpoint_path = None  # create a new directory for continued training
 
         if self.accelerator.is_main_process:
             run = wandb.init(config=args, dir=self.output_path, **{"mode": "online", "entity": args.wandb_entity, "project": args.wandb_project})
@@ -343,9 +344,9 @@ class Trainer:
 
         # weights-only resume
         load_weights_only(checkpoint_path, self.model, accelerator=self.accelerator, strict=False)
-        # self.rebuild_optimizer_and_scheduler()  # recreate fresh opt/sched
-        self.global_step = 0
-        self.step = 0
+        self.global_step = int(checkpoint_path.rstrip("/").split("_")[-1]) + 1
+        accum = self.accelerator.gradient_accumulation_steps
+        self.step = self.global_step * max(1, accum)  # micro-step counter aligned to optimizer step
         self.accelerator.print("Resumed weights-only; optimizer/scheduler reset.")
 
     def save(self):
