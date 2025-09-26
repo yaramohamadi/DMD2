@@ -46,13 +46,11 @@ train() {
       --gan_head_layers "$GAN_HEAD_LAYERS" \
       --gan_adv_loss "$GAN_ADV_LOSS" \
       $USE_BF16 \
-      --grad_accum_steps "$GRAD_ACCUM_STEPS" \
-      --checkpoint_path "$CHECKPOINT_PATH"
+      --grad_accum_steps "$GRAD_ACCUM_STEPS"
 }
 
-#  \
-#      
-
+#  \ 
+#         --checkpoint_path "$CHECKPOINT_PATH" 
 
 # -----------------------
 # Testing (streaming conditional)
@@ -112,14 +110,34 @@ test_null() {
 # -----------------------
 # Orchestration
 # -----------------------
-train &                  # start training
+# start both
+train & 
 TRAIN_PID=$!
-test_stream_conditional &  # start streaming conditional eval
+
+# start test in background; keep its PID
+test_stream_conditional &
 TEST_PID=$!
 
-# Wait for both to finish 
-wait $TEST_PID
-wait $TRAIN_PIDs
+# ensure we clean up both if we get killed
+cleanup() {
+  echo "[orchestrator] Signal caught; stopping children..."
+  kill -TERM "$TEST_PID" "$TRAIN_PID" 2>/dev/null || true
+  # also try killing their process groups (useful if they spawn children)
+  kill -TERM -"$TEST_PID" 2>/dev/null || true
+  kill -TERM -"$TRAIN_PID" 2>/dev/null || true
+}
+trap cleanup INT TERM
 
-# After training finishes, evaluate best checkpoint with NULL sampling
-# test_best_null
+# wait for training to finish (success or failure)
+wait "$TRAIN_PID"
+TRAIN_EXIT=$?
+
+echo "[orchestrator] Training finished with code $TRAIN_EXIT. Stopping the test..."
+# stop the test once training ends
+kill -TERM "$TEST_PID" 2>/dev/null || true
+kill -TERM -"$TEST_PID" 2>/dev/null || true
+
+# wait for test to exit gracefully
+wait "$TEST_PID" || true
+
+exit "$TRAIN_EXIT"

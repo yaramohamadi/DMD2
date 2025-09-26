@@ -30,9 +30,9 @@ mkdir -p "$LOGDIR"
 #  done
 #done
 
-GEN_CLS_LOSS_WEIGHT=(3e-3 15e-3 3e-3)
-CLS_LOSS_WEIGHT=(1e-2 5e-2 5e-2)
-GEN_LR=(5e-8 5e-7)
+GEN_CLS_LOSS_WEIGHT=(15e-3 3e-3) # 3e-3 
+CLS_LOSS_WEIGHT=(5e-2 5e-2) # 1e-2 
+GEN_LR=(2e-6)
 
 export WANDB_PROJECT="DMD_ABLATE_LR_CLSLOSS"
 
@@ -50,16 +50,16 @@ for lr in "${GEN_LR[@]}"; do
     export CLS_LOSS_WEIGHT="$clw" 
     export GEN_LR="${GEN_LR[0]}" 
     export GRAD_ACCUM_STEPS=1
+    export EVAL_BATCH_SIZE=4
     export BATCH_SIZE=1
-    export NUM_DENOISING_STEP=2 
-    export CUDA_VISIBLE_DEVICES=1,3 
-    export TRAIN_GPUS=1,3
-    export TEST_GPUS=3
-    export NPROC_PER_NODE=2 
+    export NUM_DENOISING_STEP=3
+    export CUDA_VISIBLE_DEVICES=0 
+    export TRAIN_GPUS=0
+    export TEST_GPUS=0
+    export NPROC_PER_NODE=1
     export NNODES=1 
     export EXTRA_TAG="_${tag}" 
     bash "$CHILD"
-
   done
 done
 

@@ -150,34 +150,41 @@ class dhariwalGuidance(nn.Module):
 
         # Initialize heads for multi-head GAN (Sushko §3.2)
         elif self.gan_classifier and self.gan_multihead:
-            # ----- MULTI-HEAD (shallow) path: 1x1 conv per tapped block -----
+            # ----- MULTI-HEAD init with selection spec -----
             with torch.no_grad():
                 dummy_x = torch.zeros(1, 3, args.resolution, args.resolution, device=accelerator.device)
                 dummy_sigma = torch.ones(1, device=accelerator.device) * self.sigma_min
+
                 # Map EDM → DDPM state for UNet hook pass
                 cfac = 1.0 / torch.sqrt(1.0 + dummy_sigma.view(1,1,1,1)**2)
                 x_t = cfac * dummy_x
-                t0 = torch.zeros(1, dtype=torch.long, device=accelerator.device)  # any valid timestep
+                t0 = torch.zeros(1, dtype=torch.long, device=accelerator.device)
                 y0 = None if args.label_dim == 0 else torch.zeros(1, args.label_dim, device=accelerator.device)
                 y = _onehot_to_class_index(y0)
-                feats = self.fake_unet.extract_multi_scale_features(x_t, t0, y, self.gan_head_layers)
+
+                # Get *all* feats once to know names and channels
+                feats_all = self.fake_unet.extract_multi_scale_features(x_t, t0, y, 'all')
+
+                # Resolve which ones to actually use based on args.gan_head_layers
+                # Examples of accepted values:
+                #   'all', 'last', 'last_k:3', 'last_pct:0.7', ['enc_3','mid','dec_2'], [8,9,10]
+                selected_names = self._resolve_head_names(feats_all, self.gan_head_layers)
+                self.gan_selected_names = selected_names  # keep for later
 
             heads = nn.ModuleDict()
-            for name, feat in feats.items():
-                ch = feat.shape[1]
+            for name in selected_names:
+                ch = feats_all[name].shape[1]
                 if self.gan_head_type == 'patch':
-                    # produce H×W logits (will be avg pooled later)
                     heads[name] = nn.Conv2d(ch, 1, kernel_size=1, stride=1, padding=0)
                 else:  # 'global'
-                    # produce scalar logit per sample via GAP
                     heads[name] = nn.Sequential(
                         nn.Conv2d(ch, 1, kernel_size=1, stride=1, padding=0),
                         nn.AdaptiveAvgPool2d(1),
                     )
             self.multi_heads = heads.to(accelerator.device)
             self.multi_heads.requires_grad_(True)
-            # -------------------------------------------------------
-
+            # ------------------------------------------------
+            
         self.num_train_timesteps = args.num_train_timesteps  
         # small sigma first, large sigma later
         karras_sigmas = torch.flip(
@@ -324,6 +331,69 @@ class dhariwalGuidance(nn.Module):
         return logits
 
     # ---------- feature extraction hooks (for multi-head GAN) ----------
+    def _resolve_head_names(self, example_feats, spec):
+        """
+        Resolve which multi-scale feature keys should have GAN heads.
+        Supports:
+        - 'all'
+        - 'last' (== last_k:1)
+        - 'last_k:N' (e.g., 'last_k:3')
+        - 'last_pct:P' (P in (0,1], e.g., 'last_pct:0.7')
+        - list[str] of exact names in example_feats.keys()
+        - list[int] indices into list(example_feats.keys()) (ordered)
+        """
+        keys = list(example_feats.keys())  # ordered
+        n = len(keys)
+
+        # Direct passthrough if user already provided a list of names
+        if isinstance(spec, (list, tuple)):
+            # allow indices or names
+            selected = []
+            for item in spec:
+                if isinstance(item, int):
+                    idx = item % n
+                    selected.append(keys[idx])
+                else:
+                    if item not in example_feats:
+                        raise ValueError(f"Unknown feature name '{item}'. Available: {keys}")
+                    selected.append(item)
+            return selected
+
+        if not isinstance(spec, str):
+            raise ValueError(f"gan_head_layers must be str or list, got {type(spec)}")
+
+        spec = spec.strip().lower()
+        if spec == 'all':
+            return keys
+        if spec == 'last':
+            return keys[-1:]
+
+        if spec.startswith('last_k:'):
+            k = int(spec.split(':', 1)[1])
+            k = max(1, min(n, k))
+            return keys[-k:]
+
+        if spec.startswith('last_pct:'):
+            pct = float(spec.split(':', 1)[1])
+            pct = max(0.0, min(1.0, pct))
+            k = max(1, int(round(n * pct)))
+            return keys[-k:]
+
+        # Back-compat: if user passed a single exact key name
+        if spec in example_feats:
+            return [spec]
+
+        raise ValueError(
+            f"Unrecognized gan_head_layers spec '{spec}'. "
+            f"Use 'all', 'last', 'last_k:<int>', 'last_pct:<float>', "
+            f"a list of names, or a list of indices. Available keys: {keys}"
+        )
+
+    def _subset_feats(self, feats_dict, selected_names):
+        """Return an OrderedDict-like subset preserving order of selected_names."""
+        return {k: feats_dict[k] for k in selected_names}
+
+
     def _extract_head_features(self, image, label):
         # optional diffusion noise for GAN
         if self.diffusion_gan:
@@ -339,8 +409,12 @@ class dhariwalGuidance(nn.Module):
         x_t = cfac * x
         t = _map_sigma_to_t(timestep_sigma, self.fake_unet.alphas_cumprod)
         y = _onehot_to_class_index(label)
-        feats = self.fake_unet.extract_multi_scale_features(x_t, t, y, self.gan_head_layers)
+
+        # Always extract 'all', then subset with the same names we built heads for
+        feats_all = self.fake_unet.extract_multi_scale_features(x_t, t, y, 'all')
+        feats = self._subset_feats(feats_all, getattr(self, 'gan_selected_names', list(feats_all.keys())))
         return feats
+
 
     
     def _critic_score(self, image, label):

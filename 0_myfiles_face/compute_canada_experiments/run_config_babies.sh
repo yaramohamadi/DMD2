@@ -64,7 +64,7 @@ export BATCH_SIZE="${BATCH_SIZE:-1}"
 export EVAL_BATCH_SIZE="${EVAL_BATCH_SIZE:-1}"
 export NUM_DENOISING_STEP="${NUM_DENOISING_STEP:-3}"
 
-export TRAIN_ITERS=700000
+export TRAIN_ITERS=20000
 
 export PROJECT_PATH="0_myfiles_face"
 export DATASET_NAME="${DATASET_NAME:-"babies"}"
@@ -128,7 +128,7 @@ export NO_LPIPS=""  # --no_lpips
 export USE_BF16="--use_bf16" # --use_bf16
 
 export GAN_HEAD_TYPE="global"
-export GAN_HEAD_LAYERS="all"
+export GAN_HEAD_LAYERS="${GAN_ADV_LOSS:-"all"}"
 export GAN_ADV_LOSS="${GAN_ADV_LOSS:-bce}"
 export GAN_MULTIHEAD="--gan_multihead"
 
