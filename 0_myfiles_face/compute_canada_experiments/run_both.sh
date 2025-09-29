@@ -3,6 +3,7 @@
 # -----------------------
 # Training
 # -----------------------
+
 train() {
   echo "[train] Starting training..."
   CUDA_VISIBLE_DEVICES=$TRAIN_GPUS torchrun \
@@ -64,9 +65,9 @@ test_stream_conditional() {
     --wandb_project "$WANDB_PROJECT" \
     --fid_npz_root "$FID_NPZ_ROOT" \
     --category "$CATEGORY" \
-    --resolution $RESOLUTION \
-    --label_dim $LABEL_DIM \
-    --label_mode uniform \
+    --resolution "$RESOLUTION" \
+    --label_dim "$LABEL_DIM" \
+    --label_mode "uniform" \
     $HAS_NULL \
     --eval_batch_size $EVAL_BATCH_SIZE \
     --total_eval_samples $TOTAL_EVAL_SAMPLES \
@@ -92,8 +93,8 @@ test_null() {
     --wandb_project "$WANDB_PROJECT" \
     --fid_npz_root "$FID_NPZ_ROOT" \
     --category "$CATEGORY" \
-    --resolution $RESOLUTION \
-    --label_dim $LABEL_DIM \
+    --resolution "$RESOLUTION" \
+    --label_dim "$LABEL_DIM" \
     --label_mode null \
     $HAS_NULL \
     --eval_best_once \

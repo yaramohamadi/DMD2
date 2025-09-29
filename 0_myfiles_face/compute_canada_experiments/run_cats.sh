@@ -20,7 +20,7 @@ for lr in "${GEN_LR[@]}"; do
 
     echo "[LOCAL] lr=$lr  GEN_CLS_LOSS_WEIGHT=$glw  CLS_LOSS_WEIGHT=$clw  tag=$tag"
 
-    export CHECKPOINT_PATH="0_myfiles_face/checkpoint_path/cat_lr5e-8_bs1_dn3_DMD1_GClsw15e-3__lr5e-8_clw5e-2_glw15e-3/checkpoint_model_050000"
+    export CHECKPOINT_PATH="0_myfiles_face/checkpoint_path/cat_lr5e-8_bs1_dn3_DMD1_GClsw15e-3__lr5e-8_clw5e-2_glw15e-3/checkpoint_model_092400"
     export DATASET_NAME="cat"
     export GEN_LR="$lr" 
     export GEN_CLS_LOSS_WEIGHT="$glw" 
@@ -28,14 +28,13 @@ for lr in "${GEN_LR[@]}"; do
     export GRAD_ACCUM_STEPS=4
     export BATCH_SIZE=1
     export NUM_DENOISING_STEP=3 
-    export CUDA_VISIBLE_DEVICES=0,2
-    export TRAIN_GPUS=0,2
+    export CUDA_VISIBLE_DEVICES=0 
+    export TRAIN_GPUS=1
     export TEST_GPUS=0
-    export NPROC_PER_NODE=2 
+    export NPROC_PER_NODE=1 
     export NNODES=1 
     export EXTRA_TAG="_${tag}" 
     bash "$CHILD"
-
   done
 done
 
