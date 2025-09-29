@@ -5,7 +5,7 @@ LOGDIR="0_myfiles_face/slurm"
 mkdir -p "$LOGDIR"
 
 
-GEN_CLS_LOSS_WEIGHT=(15e-2) # previously this was 15e-3 #  15e-1
+GEN_CLS_LOSS_WEIGHT=(15e-1) # previously this was 15e-3 #  15e-2
 CLS_LOSS_WEIGHT=(5e-2)
 GEN_LR=(5e-7)
  
@@ -28,9 +28,9 @@ for lr in "${GEN_LR[@]}"; do
     export GRAD_ACCUM_STEPS=4
     export BATCH_SIZE=1
     export NUM_DENOISING_STEP=3 
-    export CUDA_VISIBLE_DEVICES=0 
-    export TRAIN_GPUS=1
-    export TEST_GPUS=0
+    export CUDA_VISIBLE_DEVICES=2,3
+    export TRAIN_GPUS=2
+    export TEST_GPUS=3
     export NPROC_PER_NODE=1 
     export NNODES=1 
     export EXTRA_TAG="_${tag}" 
