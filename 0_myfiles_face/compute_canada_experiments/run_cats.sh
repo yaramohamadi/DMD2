@@ -5,10 +5,10 @@ LOGDIR="0_myfiles_face/slurm"
 mkdir -p "$LOGDIR"
 
 
-GEN_CLS_LOSS_WEIGHT=(15e-3)
+GEN_CLS_LOSS_WEIGHT=(15e-1) # previously this was 15e-3 #  15e-2
 CLS_LOSS_WEIGHT=(5e-2)
-GEN_LR=(5e-8)
-
+GEN_LR=(5e-7)
+ 
 export WANDB_PROJECT="CAT"
 
 # paired sweep, local runs\
@@ -20,23 +20,21 @@ for lr in "${GEN_LR[@]}"; do
 
     echo "[LOCAL] lr=$lr  GEN_CLS_LOSS_WEIGHT=$glw  CLS_LOSS_WEIGHT=$clw  tag=$tag"
 
-    export CHECKPOINT_PATH="0_myfiles_face/checkpoint_path/cat_lr5e-8_bs1_dn3_DMD1_GClsw15e-3__lr5e-8_clw5e-2_glw15e-3/checkpoint_model_012500"
+    export CHECKPOINT_PATH="0_myfiles_face/checkpoint_path/cat_lr5e-8_bs1_dn3_DMD1_GClsw15e-3__lr5e-8_clw5e-2_glw15e-3/checkpoint_model_095200"
     export DATASET_NAME="cat"
     export GEN_LR="$lr" 
     export GEN_CLS_LOSS_WEIGHT="$glw" 
     export CLS_LOSS_WEIGHT="$clw" 
-    export GEN_LR="${GEN_LR[0]}" 
     export GRAD_ACCUM_STEPS=4
     export BATCH_SIZE=1
     export NUM_DENOISING_STEP=3 
-    export CUDA_VISIBLE_DEVICES=0,1 
-    export TRAIN_GPUS=0,1
-    export TEST_GPUS=0
-    export NPROC_PER_NODE=2 
+    export CUDA_VISIBLE_DEVICES=2,3
+    export TRAIN_GPUS=2
+    export TEST_GPUS=3
+    export NPROC_PER_NODE=1 
     export NNODES=1 
     export EXTRA_TAG="_${tag}" 
     bash "$CHILD"
-
   done
 done
 

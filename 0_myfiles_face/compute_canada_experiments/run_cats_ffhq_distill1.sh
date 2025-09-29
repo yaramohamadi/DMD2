@@ -7,7 +7,7 @@ mkdir -p "$LOGDIR"
 
 GEN_CLS_LOSS_WEIGHT=(15e-3)
 CLS_LOSS_WEIGHT=(5e-2)
-GEN_LR=(5e-8)
+GEN_LR=(2e-6)
 
 export WANDB_PROJECT="CAT_FFHQ_distilled"
 
@@ -19,9 +19,7 @@ for lr in "${GEN_LR[@]}"; do
     tag="lr${lr}_clw${clw}_glw${glw}"
 
     echo "[LOCAL] lr=$lr  GEN_CLS_LOSS_WEIGHT=$glw  CLS_LOSS_WEIGHT=$clw  tag=$tag"
-
-    export GEN_LR="2e-6"
-    export DMD_LOSS_WEIGHT="1"
+    export DMD_LOSS_WEIGHT="0.01"
     export CHECKPOINT_PATH="0_myfiles_face/checkpoint_path/FFHQ_distilled_weights/checkpoint_model_037200"
     export DATASET_NAME="cat"
     export GEN_LR="$lr" 
@@ -31,9 +29,9 @@ for lr in "${GEN_LR[@]}"; do
     export GRAD_ACCUM_STEPS=1
     export BATCH_SIZE=1
     export NUM_DENOISING_STEP=3 
-    export CUDA_VISIBLE_DEVICES=0,1 
-    export TRAIN_GPUS=0
-    export TEST_GPUS=1
+    export CUDA_VISIBLE_DEVICES=2,3 
+    export TRAIN_GPUS=2
+    export TEST_GPUS=3
     export NPROC_PER_NODE=1
     export NNODES=1 
     export EXTRA_TAG="_${tag}" 
