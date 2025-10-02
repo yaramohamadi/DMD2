@@ -12,8 +12,8 @@ train() {
     --master_addr $MASTER_ADDR \
     --master_port $MASTER_PORT \
     main/dhariwal/train_dhariwal.py \
-      --generator_lr $GENERATOR_LR \
-      --guidance_lr $GENERATOR_LR \
+      --generator_lr $GEN_LR \
+      --guidance_lr $GEN_LR \
       --train_iters $TRAIN_ITERS \
       --output_path "$OUTPUT_PATH" \
       --batch_size $BATCH_SIZE \
@@ -107,37 +107,62 @@ test_null() {
     $NO_LPIPS
 }
 
+
+
+# --- Make sure failures trigger cleanup, and children get SIGHUP on exit ---
+set -Eeuo pipefail
+shopt -s huponexit
+
+TEST_PID=""
+
+cleanup() {
+  local code=$?
+  if [[ -n "${TEST_PID:-}" ]] && kill -0 "$TEST_PID" 2>/dev/null; then
+    echo "[orchestrator] stopping test (pid=$TEST_PID)"
+    # ask nicely first
+    kill -TERM "$TEST_PID" 2>/dev/null || true
+    # wait up to 10s, then force if still alive
+    for i in {1..10}; do
+      kill -0 "$TEST_PID" 2>/dev/null || break
+      sleep 1
+    done
+    kill -KILL "$TEST_PID" 2>/dev/null || true
+  fi
+  exit "$code"
+}
+
+trap cleanup EXIT INT TERM ERR
+
+
+
+
 # -----------------------
 # Orchestration
 # -----------------------
-# start both
-train & 
-TRAIN_PID=$!
 
-# start test in background; keep its PID
+# start test in background; remember PID
 test_stream_conditional &
 TEST_PID=$!
 
-# ensure we clean up both if we get killed
-cleanup() {
-  echo "[orchestrator] Signal caught; stopping children..."
-  kill -TERM "$TEST_PID" "$TRAIN_PID" 2>/dev/null || true
-  # also try killing their process groups (useful if they spawn children)
-  kill -TERM -"$TEST_PID" 2>/dev/null || true
-  kill -TERM -"$TRAIN_PID" 2>/dev/null || true
-}
-trap cleanup INT TERM
+# run training in foreground; any error triggers the trap
+train
 
-# wait for training to finish (success or failure)
-wait "$TRAIN_PID"
-TRAIN_EXIT=$?
+# if we reach here, training finished cleanly; stop test and exit
+cleanup
 
-echo "[orchestrator] Training finished with code $TRAIN_EXIT. Stopping the test..."
-# stop the test once training ends
-kill -TERM "$TEST_PID" 2>/dev/null || true
-kill -TERM -"$TEST_PID" 2>/dev/null || true
-
-# wait for test to exit gracefully
-wait "$TEST_PID" || true
-
-exit "$TRAIN_EXIT"
+echo "Train finished --------------------------------------------------------------------"
+echo "------------------------------------------------------------------------------------"
+echo "------------------------------------------------------------------------------------"
+echo "------------------------------------------------------------------------------------"
+echo "------------------------------------------------------------------------------------"
+echo "------------------------------------------------------------------------------------"
+echo "------------------------------------------------------------------------------------"
+echo "------------------------------------------------------------------------------------"
+echo "------------------------------------------------------------------------------------"
+echo "------------------------------------------------------------------------------------"
+echo "------------------------------------------------------------------------------------"
+echo "------------------------------------------------------------------------------------"
+echo "------------------------------------------------------------------------------------"
+echo "------------------------------------------------------------------------------------"
+echo "------------------------------------------------------------------------------------"
+echo "------------------------------------------------------------------------------------"
