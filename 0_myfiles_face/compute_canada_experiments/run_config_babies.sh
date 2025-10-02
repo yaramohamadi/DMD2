@@ -144,7 +144,7 @@ export CHECKPOINT_PATH="${CHECKPOINT_PATH:-}"
 # -----------------------
 # Sweep ranges
 # -----------------------
-export GEN_LR="${GEN_LR:-5e-8}"
+export GEN_LR="${GEN_LR:-2e-6}"
 
 export EXPERIMENT_NAME="${DATASET_NAME}_lr${GEN_LR}_bs${BATCH_SIZE}_dn${NUM_DENOISING_STEP}_DMD${DMD_LOSS_WEIGHT}_GClsw${GEN_CLS_LOSS_WEIGHT}_${EXTRA_TAG}"
 export OUTPUT_PATH="0_myfiles_face/checkpoint_path/cat_lr5e-8_bs1_dn3_DMD1_GClsw15e-3__lr5e-8_clw5e-2_glw15e-3"

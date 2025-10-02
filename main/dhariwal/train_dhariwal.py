@@ -202,7 +202,9 @@ class Trainer:
 
         real_image_dataloader = accelerator.prepare(real_image_dataloader)
         self.real_image_dataloader = cycle(real_image_dataloader)
-            
+        
+        print("loading learning rate schedulers and optimizers")
+        print(f"Generator lr: {args.generator_lr}, Guidance lr: {args.guidance_lr}")
         self.optimizer_guidance = torch.optim.AdamW(
             [param for param in self.model.guidance_model.parameters() if param.requires_grad], 
             lr=args.guidance_lr, 
@@ -258,6 +260,16 @@ class Trainer:
             print("Attempting to resume from intermediate checkpoint....")
             self.load(args.checkpoint_path)
             args.checkpoint_path = None  # create a new directory for continued training
+
+        
+        # set a single new LR
+        for g in self.optimizer_generator.param_groups:
+            g["lr"] = args.generator_lr
+
+        # set a single new LR
+        for g in self.optimizer_guidance.param_groups:
+            g["lr"] = args.guidance_lr
+
 
         if self.accelerator.is_main_process:
             run = wandb.init(config=args, dir=self.output_path, **{"mode": "online", "entity": args.wandb_entity, "project": args.wandb_project})
