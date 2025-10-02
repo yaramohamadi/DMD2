@@ -109,29 +109,25 @@ test_null() {
 
 
 
-# --- Make sure failures trigger cleanup, and children get SIGHUP on exit ---
-set -Eeuo pipefail
-shopt -s huponexit
-
-TEST_PID=""
-
-cleanup() {
-  local code=$?
-  if [[ -n "${TEST_PID:-}" ]] && kill -0 "$TEST_PID" 2>/dev/null; then
-    echo "[orchestrator] stopping test (pid=$TEST_PID)"
-    # ask nicely first
-    kill -TERM "$TEST_PID" 2>/dev/null || true
-    # wait up to 10s, then force if still alive
-    for i in {1..10}; do
-      kill -0 "$TEST_PID" 2>/dev/null || break
-      sleep 1
-    done
-    kill -KILL "$TEST_PID" 2>/dev/null || true
-  fi
-  exit "$code"
-}
-
-trap cleanup EXIT INT TERM ERR
+# TEST_PID=""
+# 
+# cleanup() {
+#   local code=$?
+#   if [[ -n "${TEST_PID:-}" ]] && kill -0 "$TEST_PID" 2>/dev/null; then
+#     echo "[orchestrator] stopping test (pid=$TEST_PID)"
+#     # ask nicely first
+#     kill -TERM "$TEST_PID" 2>/dev/null || true
+#     # wait up to 10s, then force if still alive
+#     for i in {1..10}; do
+#       kill -0 "$TEST_PID" 2>/dev/null || break
+#       sleep 1
+#     done
+#     kill -KILL "$TEST_PID" 2>/dev/null || true
+#   fi
+#   exit "$code"
+# }
+# 
+# trap cleanup EXIT INT TERM ERR
 
 
 

@@ -2,16 +2,16 @@
 #SBATCH --job-name=dmd2_babies_bs3_1gpu
 #SBATCH --account=def-hadi87
 #SBATCH --nodes=1
-#SBATCH --gres=gpu:h100:2
+#SBATCH --gres=gpu:h100:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=20G
-#SBATCH --time=60:00:00
+#SBATCH --time=00:10:00
 #SBATCH --mail-user=yara.mohammadi-bahram.1@ens.etsmtl.ca
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --output=0_myfiles_face/slurm/%x-%j.out
 #SBATCH --error=0_myfiles_face/slurm/%x-%j.err
 
-export SERVER="${SERVER:-"local"}"
+export SERVER="${SERVER:-"cc"}"
 
 if [[ "$SERVER" != "local" && "$SERVER" != "cc" ]]; then
   echo "Usage: $0 {local|cc}"
