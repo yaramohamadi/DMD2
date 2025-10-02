@@ -5,7 +5,7 @@ LOGDIR="0_myfiles_face/slurm"
 mkdir -p "$LOGDIR"
 
 
-GEN_CLS_LOSS_WEIGHT=(15e-3)
+GEN_CLS_LOSS_WEIGHT=(15e-1) # previously this was 15e-3 #  15e-2
 CLS_LOSS_WEIGHT=(5e-2)
 GEN_LR=(2e-6)
  
