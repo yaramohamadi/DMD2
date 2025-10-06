@@ -10,6 +10,7 @@ from accelerate.utils import ProjectConfiguration
 from diffusers.optimization import get_scheduler
 from main.data.lmdb_dataset import LMDBDataset
 from main.dhariwal.dhariwal_unified_model import dhariwalUniModel
+from main.dhariwal.dhariwal_guidance import get_sigmas_karras 
 from accelerate.utils import set_seed
 from accelerate import Accelerator
 import argparse 
@@ -281,6 +282,43 @@ class Trainer:
 
         self._mb_clear()
 
+        # Fine-tuning baseline
+        self.ddpm_steps = args.ddpm_steps
+            if self.ddpm_steps == "few":
+                K = int(getattr(args, "num_denoising_step", 3)) 
+                # Use your guidance hyperparams as bounds:
+                smin = self.model.guidance_model.sigma_min
+                smax = self.model.guidance_model.sigma_max
+                few = get_sigmas_karras(K, smin, smax)[::-1].to(self.accelerator.device)  # high→low
+                self.register_buffer("few_sigmas", few)  # [K]
+
+    # ---------- Fine-tuning baseline: DDPM loss on random noise levels ----------
+    def _sigma_from_t(self, t_idx: torch.Tensor) -> torch.Tensor:
+        # Map DDPM ᾱ_t to σ via ᾱ = 1/(1+σ^2)  ⇒  σ = sqrt(1/ᾱ - 1)
+        acp = self.model.feedforward_model.alphas_cumprod  # from DhariwalUNetAdapter
+        alpha_bar = acp[t_idx]  # [B]
+        return torch.sqrt(1.0 / alpha_bar - 1.0)
+
+    def naive_ddpm_loss(self, x0: torch.Tensor, labels: torch.Tensor | None):
+        B = x0.size(0)
+        device = x0.device
+        if self.ddpm_steps == "all":
+            T = self.model.feedforward_model.alphas_cumprod.shape[0]  # typically 1000
+            t = torch.randint(0, T, (B,), device=device)
+            sigma = self._sigma_from_t(t)  # [B]
+        else:
+            idx = torch.randint(0, int(self.few_sigmas.shape[0]), (B,), device=device)
+            sigma = self.few_sigmas[idx]  # [B]
+
+        eps = torch.randn_like(x0)
+        x  = x0 + sigma.view(B,1,1,1) * eps
+
+        # Student returns \hat{x}_0 given (x, sigma, label-onehot)
+        x0_hat = self.model.feedforward_model(x, sigma, labels)  # adapter maps σ→nearest t internally
+        eps_hat = (x - x0_hat) / sigma.view(B,1,1,1)
+        return torch.mean((eps_hat - eps)**2)
+    # -------------------------------------------------------------------------
+
     # Grad accumulation wandb
     # ---- micro-batch accumulator (per grad-accum window) ----
     def _mb_clear(self):
@@ -425,8 +463,16 @@ class Trainer:
             if n.endswith("label_emb.weight"):
                 yield p
 
-
+    # ---------------------- Fine-tuning Baseline: DDPM loss on random noise levels ----------------------
     def train_one_step(self):
+        """
+        Two modes:
+        - ft_mode == "naive": classic diffusion baseline (epsilon- or x0-MSE) on the student only.
+                                Uses self.naive_ddpm_loss(x0, labels). Skips guidance/DMD/GAN.
+        - otherwise: your original DMD2/GAN path (unchanged).
+        """
+        from contextlib import nullcontext
+
         self.model.train()
         accelerator = self.accelerator
         accum = accelerator.gradient_accumulation_steps
@@ -440,7 +486,7 @@ class Trainer:
 
         # ----- batch prep (unchanged) -----
         real_dict = next(self.real_image_dataloader)
-        real_image = real_dict["images"] * 2.0 - 1.0
+        real_image = real_dict["images"] * 2.0 - 1.0  # [-1, 1]
         if self.label_dim > 0:
             real_label = self.eye_matrix[real_dict["class_labels"].squeeze(dim=1)]
             labels = torch.randint(0, self.label_dim - 1, (self.batch_size,), device=accelerator.device)
@@ -453,6 +499,57 @@ class Trainer:
             real_label = None
             labels = None
         real_train_dict = {"real_image": real_image, "real_label": real_label}
+
+        # ---------------------------
+        # NEW: naive fine-tune branch
+        # ---------------------------
+        if getattr(self.args, "ft_mode", "pso") == "naive":
+            # We train the student (feedforward_model) with a plain diffusion loss on *real* x0 and their true labels.
+            # Guidance/DMD/GAN are bypassed, no gradients applied to guidance_model.
+            generator_grad_norm = torch.tensor(0.0, device=accelerator.device)
+
+            with accelerator.accumulate(self.model.feedforward_model):
+                # Expect a helper you added earlier; pass x0 & the *true* labels for supervised conditioning.
+                loss = self.naive_ddpm_loss(real_image.to(accelerator.device),
+                                            real_label if self.label_dim > 0 else None)
+
+                accelerator.backward(loss)
+
+                if accelerator.sync_gradients:
+                    generator_grad_norm = torch.nn.utils.clip_grad_norm_(
+                        self.model.feedforward_model.parameters(), self.max_grad_norm
+                    )
+                    # Step student optimizer/scheduler only
+                    self.optimizer_generator.step()
+                    self.optimizer_generator.zero_grad(set_to_none=True)
+                    self.scheduler_generator.step()
+
+            # Minimal logging compatible with your logger
+            loss_dict = {
+                "naive_ddpm_loss": float(loss.detach().item()),
+                # Map to 'loss_dm' as well so existing plots don’t break
+                "loss_dm": float(loss.detach().item())
+            }
+            log_dict = {}  # keep empty; your logger can handle it
+            guidance_grad_norm = torch.tensor(0.0, device=accelerator.device)
+
+            # Emit to W&B at your cadence
+            if self.accelerator.is_main_process and (self.global_step % self.wandb_iters == 0):
+                try:
+                    import wandb
+                    wandb.log({"naive_ddpm_loss": loss_dict["naive_ddpm_loss"]}, step=self.global_step)
+                except Exception:
+                    pass
+
+            # Housekeeping
+            self.step += 1
+            # Reuse your existing logging wrapper
+            self.log_everything(loss_dict, log_dict, generator_grad_norm, guidance_grad_norm, accum)
+            return
+
+        # ---------------------------
+        # ORIGINAL DMD2 / GAN PATH
+        # ---------------------------
 
         scaled_noise = torch.randn(
             self.batch_size, 3, self.resolution, self.resolution, device=accelerator.device
@@ -521,7 +618,6 @@ class Trainer:
                 self.optimizer_guidance.zero_grad(set_to_none=True)
                 self.scheduler_guidance.step()
 
-
         # ---- safe-merge logs so guidance can’t clobber images ----
         log_dict = gen_log_dict.copy()
         for k, v in guid_log_dict.items():
@@ -530,7 +626,8 @@ class Trainer:
         loss_dict = {**gen_loss_dict, **guid_loss_dict}
 
         self.log_everything(loss_dict, log_dict, generator_grad_norm, guidance_grad_norm, accum)
-
+    # -------------------------------
+    
 
     def train(self):
         accum = self.accelerator.gradient_accumulation_steps
@@ -820,6 +917,12 @@ def parse_args():
     parser.add_argument("--use_bf16", action="store_true")
     parser.add_argument("--label_dropout_p", type=float, default=0.30, 
     help="Probability to drop labels for the entire micro-batch (CFG-style).")
+
+    # Fine-tuning baseline
+    parser.add_argument("--ft_mode", choices=["pso", "naive"], default="pso",
+                    help="Use 'naive' for plain diffusion fine-tuning baseline.")
+    parser.add_argument("--ddpm_steps", choices=["all", "few"], default="all",
+                        help="'all' = 1000-step grid; 'few' = sample from K sigmas")
     # -----------------------------------------------------------
 
     args = parser.parse_args()

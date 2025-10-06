@@ -51,6 +51,26 @@ fi
 # Fixed configs
 # -----------------------
 
+
+
+# ==== fine-tune baseline ====
+export FT_MODE="${FT_MODE:-pso}"          # pso by default; we'll set 'naive' for baselines
+export DDPM_STEPS="${DDPM_STEPS:-all}"    # 'all' (1000t) or 'few' (K steps)
+
+# If we're in naive baseline, you can also zero DMD and skip GAN flags:
+if [[ "$FT_MODE" == "naive" ]]; then
+  export DMD_LOSS_WEIGHT=0
+  export GAN_MULTIHEAD=""
+fi
+
+# Thread the setting into the experiment tag
+extra_ft_tag="_ft${FT_MODE}_ddpm${DDPM_STEPS}"
+if [[ "$DDPM_STEPS" == "few" ]]; then extra_ft_tag="${extra_ft_tag}_dn${NUM_DENOISING_STEP}"; fi
+export EXTRA_TAG="${EXTRA_TAG}${extra_ft_tag}"
+# ==== /fine-tune baseline ====
+
+
+
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1}" # 0,1,2,3
 export TRAIN_GPUS="${TRAIN_GPUS:-0,1}" # 
 export TEST_GPUS="${TEST_GPUS:-1}" #3
@@ -106,6 +126,8 @@ else
   export HAS_NULL=""
 fi
 # ------------------------------------------------------------------------
+
+
 
 export DENOISING_SIGMA_END=0.5
 
