@@ -2,16 +2,16 @@
 #SBATCH --job-name=dmd2_babies_bs3_1gpu
 #SBATCH --account=def-hadi87
 #SBATCH --nodes=1
-#SBATCH --gres=gpu:h100:2
+#SBATCH --gres=gpu:h100:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=20G
-#SBATCH --time=60:00:00
+#SBATCH --time=00:10:00
 #SBATCH --mail-user=yara.mohammadi-bahram.1@ens.etsmtl.ca
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --output=0_myfiles_face/slurm/%x-%j.out
 #SBATCH --error=0_myfiles_face/slurm/%x-%j.err
 
-export SERVER="${SERVER:-"local"}"
+export SERVER="${SERVER:-"cc"}"
 
 if [[ "$SERVER" != "local" && "$SERVER" != "cc" ]]; then
   echo "Usage: $0 {local|cc}"
@@ -68,7 +68,7 @@ export TRAIN_ITERS=40000
 export PROJECT_PATH="0_myfiles_face"
 export DATASET_NAME="${DATASET_NAME:-"babies"}"
 export CHECKPOINT_INIT="$PROJECT_PATH/checkpoints/ffhq.pt"
-export REAL_IMAGE_PATH="$PROJECT_PATH/datasets/targets/10_${DATASET_NAME}_lmdb"
+export REAL_IMAGE_PATH="$PROJECT_PATH/datasets/targets/${DATASET_SIZE}_${DATASET_NAME}_lmdb"
 
 export WANDB_ENTITY="yara-mohammadi-bahram-1-ecole-superieure-de-technologie"
 export WANDB_PROJECT="${WANDB_PROJECT:-"DMD_unconditional_${DATASET_NAME}_dmd_weight_ablation"}"
@@ -119,7 +119,7 @@ export WANDB_ITERS=100
 export MAX_CHECKPOINT=100
 
 export FID_NPZ_ROOT="$PROJECT_PATH/datasets/fid_npz"
-export FEWSHOT_DATASET="$PROJECT_PATH/datasets/targets/10_${DATASET_NAME}/0"
+export FEWSHOT_DATASET="$PROJECT_PATH/datasets/targets/${DATASET_SIZE}_${DATASET_NAME}/0"
 export TOTAL_EVAL_SAMPLES=5000
 export CONDITIONING_SIGMA=80.0
 export LPIPS_CLUSTER_SIZE=100
@@ -141,19 +141,34 @@ export DEN_FLAG="--denoising"
 export BEST_FLAG="" #
 export CHECKPOINT_PATH="${CHECKPOINT_PATH:-}"
 
-# -----------------------
-# Sweep ranges
-# -----------------------
-export GEN_LR="${GEN_LR:-2e-6}"
-
 export EXPERIMENT_NAME="${DATASET_NAME}_lr${GEN_LR}_bs${BATCH_SIZE}_dn${NUM_DENOISING_STEP}_DMD${DMD_LOSS_WEIGHT}_GClsw${GEN_CLS_LOSS_WEIGHT}_${EXTRA_TAG}"
 export OUTPUT_PATH="0_myfiles_face/checkpoint_path/$EXPERIMENT_NAME"
 # "$PROJECT_PATH/checkpoint_path/$EXPERIMENT_NAME"
 export WANDB_NAME="$EXPERIMENT_NAME"
 
+
+
+echo "DATASET_NAME ${DATASET_NAME}"
+echo "TRAIN_ITERS ${TRAIN_ITERS}"
+echo "GEN_LR ${GEN_LR}"
+echo "GEN_CLS_LOSS_WEIGHT ${GEN_CLS_LOSS_WEIGHT}"
+echo "CLS_LOSS_WEIGHT  ${CLS_LOSS_WEIGHT}"
+echo "DATASET_SIZE ${DATASET_SIZE}"
+echo "NUM_DENOISING_STEP ${NUM_DENOISING_STEP}"
+echo "GRAD_ACCUM_STEPS ${GRAD_ACCUM_STEPS}"
+echo "BATCH_SIZE ${BATCH_SIZE}"
+echo "NUM_DENOISING_STEP ${NUM_DENOISING_STEP}"
+echo "CUDA_VISIBLE_DEVICES ${CUDA_VISIBLE_DEVICES}"
+echo "TRAIN_GPUS ${TRAIN_GPUS}"
+echo "TEST_GPUS ${TEST_GPUS}"
+echo "NPROC_PER_NODE ${NPROC_PER_NODE}"
+echo "NNODES ${NNODES}"
+
+echo "_____________________________"
+
 echo "[RUN] $EXPERIMENT_NAME"
 
-GENERATOR_LR="$GEN_LR" \
+GEN_LR="$GEN_LR" \
 BATCH_SIZE="$BATCH_SIZE" \
 NUM_DENOISING_STEP="$NUM_DENOISING_STEP" \
 EXPERIMENT_NAME="$EXPERIMENT_NAME" \
