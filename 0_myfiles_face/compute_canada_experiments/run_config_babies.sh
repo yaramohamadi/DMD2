@@ -11,7 +11,7 @@
 #SBATCH --output=0_myfiles_face/slurm/%x-%j.out
 #SBATCH --error=0_myfiles_face/slurm/%x-%j.err
 
-export SERVER="${SERVER:-"cc"}"
+export SERVER="${SERVER:-"local"}"
 
 if [[ "$SERVER" != "local" && "$SERVER" != "cc" ]]; then
   echo "Usage: $0 {local|cc}"
@@ -64,6 +64,7 @@ export BATCH_SIZE="${BATCH_SIZE:-1}"
 export EVAL_BATCH_SIZE=16
 export NUM_DENOISING_STEP="${NUM_DENOISING_STEP:-2}"
 export TRAIN_ITERS=40000
+export DATASET_SIZE="${DATASET_SIZE:-10}"  # 10 5 1
 
 export PROJECT_PATH="0_myfiles_face"
 export DATASET_NAME="${DATASET_NAME:-"babies"}"
