@@ -27,6 +27,11 @@ from contextlib import nullcontext
 
 import os, glob, torch
 from collections import OrderedDict
+from typing import Optional
+
+# inside class Trainer
+import torch.nn.functional as F
+
 
 def _strip_module_prefix(sd):
     if any(k.startswith("module.") for k in sd.keys()):
@@ -284,13 +289,13 @@ class Trainer:
 
         # Fine-tuning baseline
         self.ddpm_steps = args.ddpm_steps
-            if self.ddpm_steps == "few":
-                K = int(getattr(args, "num_denoising_step", 3)) 
-                # Use your guidance hyperparams as bounds:
-                smin = self.model.guidance_model.sigma_min
-                smax = self.model.guidance_model.sigma_max
-                few = get_sigmas_karras(K, smin, smax)[::-1].to(self.accelerator.device)  # high→low
-                self.register_buffer("few_sigmas", few)  # [K]
+        if self.ddpm_steps == "few":
+            K = int(getattr(args, "num_denoising_step", 3)) 
+            # Use your guidance hyperparams as bounds:
+            smin = self.model.guidance_model.sigma_min
+            smax = self.model.guidance_model.sigma_max
+            few = get_sigmas_karras(K, smin, smax)[::-1].to(self.accelerator.device)  # high→low
+            self.register_buffer("few_sigmas", few)  # [K]
 
     # ---------- Fine-tuning baseline: DDPM loss on random noise levels ----------
     def _sigma_from_t(self, t_idx: torch.Tensor) -> torch.Tensor:
@@ -299,25 +304,112 @@ class Trainer:
         alpha_bar = acp[t_idx]  # [B]
         return torch.sqrt(1.0 / alpha_bar - 1.0)
 
-    def naive_ddpm_loss(self, x0: torch.Tensor, labels: torch.Tensor | None):
+
+    # fine-tuning loss function 
+    def naive_ddpm_loss(self, x0: torch.Tensor, labels=None) -> torch.Tensor:
+        """
+        Plain DDPM-style loss on a distilled k-step student:
+        - If self.ddpm_steps == 'few', restrict t to the student's few-step schedule.
+        - Else sample t ~ Uniform({0,...,T-1}).
+        Works with the DhariwalUNetAdapter that predicts x0_hat from EDM-corrupted x.
+        """
+        accelerator = self.accelerator
+        ff = accelerator.unwrap_model(self.model.feedforward_model)  # unwrap DDP
+        # DDPM cumulative ᾱ_t (length T, typically 1000). Registered on the adapter.
+        alphas_cumprod = ff.alphas_cumprod.to(x0.device, dtype=x0.dtype)
+        T = alphas_cumprod.shape[0]
+
         B = x0.size(0)
-        device = x0.device
-        if self.ddpm_steps == "all":
-            T = self.model.feedforward_model.alphas_cumprod.shape[0]  # typically 1000
-            t = torch.randint(0, T, (B,), device=device)
-            sigma = self._sigma_from_t(t)  # [B]
+
+        # --- choose timesteps ---
+        few_mode = getattr(self, "ddpm_steps", "all") == "few"
+        if few_mode:
+            # Use the student's few denoising steps.
+            # We map the student's σ-grid to nearest DDPM t-indices.
+            # Prefer the σs already on your guidance/Unified model if present.
+            # (Trainer sees self.model.karras_sigmas via DhariwalGuidance). :contentReference[oaicite:2]{index=2}
+            sigmas_full = getattr(self.model, "karras_sigmas", None)
+            K = int(getattr(self, "num_denoising_step", 4))
+            if sigmas_full is not None and sigmas_full.numel() >= K:
+                # pick K roughly evenly spaced σ’s across the schedule
+                idxs = torch.linspace(0, sigmas_full.numel() - 1, steps=K, device=x0.device).round().long()
+                sigmas_k = sigmas_full[idxs].to(x0.device, x0.dtype)
+                # map σ -> nearest t via ᾱ_target = 1/(1+σ^2) and nearest in alphas_cumprod
+                alpha_target = 1.0 / (1.0 + sigmas_k**2)                       # [K]
+                d = (alpha_target[:, None] - alphas_cumprod[None, :]).abs()    # [K, T]
+                t_pool = torch.argmin(d, dim=1)                                 # [K] int
+            else:
+                # fallback: K linearly spaced timesteps
+                t_pool = torch.linspace(0, T - 1, steps=K, device=x0.device).round().long()
+            # sample each batch item from the K-step pool
+            pick = torch.randint(0, t_pool.numel(), (B,), device=x0.device)
+            t = t_pool[pick]
         else:
-            idx = torch.randint(0, int(self.few_sigmas.shape[0]), (B,), device=device)
-            sigma = self.few_sigmas[idx]  # [B]
+            t = torch.randint(0, T, (B,), device=x0.device)
+
+        # --- DDPM forward corruption (x_t = sqrt(ᾱ_t) x0 + sqrt(1-ᾱ_t) ε) written in EDM form ---
+        alpha_bar = alphas_cumprod.gather(0, t).clamp(min=1e-6, max=1.0)   # [B]
+        # Convert to EDM sigma that your adapter expects: sigma^2 = 1/ᾱ - 1
+        sigma = torch.sqrt(torch.clamp(1.0 / alpha_bar - 1.0, min=0.0))    # [B]
+        # Avoid division by 0 when recovering ε̂ later
+        sigma_safe = sigma.clamp_min(1e-3)
 
         eps = torch.randn_like(x0)
-        x  = x0 + sigma.view(B,1,1,1) * eps
+        x = x0 + sigma.view(B, 1, 1, 1) * eps  # EDM corruption that adapter expects
 
-        # Student returns \hat{x}_0 given (x, sigma, label-onehot)
-        x0_hat = self.model.feedforward_model(x, sigma, labels)  # adapter maps σ→nearest t internally
-        eps_hat = (x - x0_hat) / sigma.view(B,1,1,1)
-        return torch.mean((eps_hat - eps)**2)
-    # -------------------------------------------------------------------------
+        # --- predict x0_hat using your adapter (handles EDM→DDPM mapping internally) ---
+        x0_hat = self.model.feedforward_model(x, sigma, labels)  # works under DDP
+
+        # Recover ε̂ = (x - x0_hat)/σ and do the standard ε-MSE objective
+        eps_hat = (x - x0_hat) / sigma_safe.view(B, 1, 1, 1)
+        loss = F.mse_loss(eps_hat, eps, reduction="mean")
+        return loss, x0_hat
+    # ----------------------------------------------------------------
+    
+    def log_finetune_window(self, generator_grad_norm):
+        # Aggregate tensors & scalar means across the grad-accum window and ranks
+        batched, scalar_means = self._mb_concat_and_gather()
+
+        if self.accelerator.is_main_process:
+            x0_hat_all = batched.get('finetune_x0_hat', None)
+            if x0_hat_all is not None:
+                # (optional) cap how many images to grid (e.g., first 16)
+                x_vis = (x0_hat_all * 0.5 + 0.5).clamp(0, 1)
+                x_vis = x_vis[:16]
+                grid = prepare_images_for_saving(x_vis, resolution=self.resolution)
+
+                gen_gn = float(generator_grad_norm.item() if torch.is_tensor(generator_grad_norm) else generator_grad_norm)
+                wandb.log({
+                    "finetune/pred_x0":   wandb.Image(grid),
+                    "finetune/loss":      float(scalar_means.get('loss_dm', 0.0)),
+                    "finetune/grad_norm": gen_gn,
+                    "optimizer_step":     int(self.global_step),
+                }, step=self.global_step)
+
+        # clear buffers for the next window
+        if self.accelerator.sync_gradients:
+            self._mb_clear()
+
+
+    # ADD this helper method to Trainer
+    def log_finetune_x0(self, x0_hat: torch.Tensor, loss: torch.Tensor, generator_grad_norm):
+        """
+        Log only predicted x0 (image grid) + loss (+ grad-norm).
+        Uses gather_for_metrics to collect from all ranks; logs on rank 0.
+        """
+        # gather tensor across processes for consistent grids
+        x0_hat_all = self.accelerator.gather_for_metrics(x0_hat.detach())
+        if self.accelerator.is_main_process:
+            x_vis = (x0_hat_all * 0.5 + 0.5).clamp(0, 1)
+            grid = prepare_images_for_saving(x_vis, resolution=self.resolution)
+            gen_gn = float(generator_grad_norm.item() if torch.is_tensor(generator_grad_norm) else generator_grad_norm)
+            wandb.log({
+                "finetune/loss": float(loss.detach().item()),
+                "finetune/grad_norm": gen_gn,
+                "finetune/pred_x0": wandb.Image(grid),
+                "optimizer_step": int(self.global_step),
+            }, step=self.global_step)
+
 
     # Grad accumulation wandb
     # ---- micro-batch accumulator (per grad-accum window) ----
@@ -342,6 +434,7 @@ class Trainer:
             'pred_realism_on_real',
             'critic_fake',
             'critic_real',
+            'finetune_x0_hat',
         ]
 
         for k in tkeys:
@@ -383,20 +476,20 @@ class Trainer:
 
     def load(self, checkpoint_path):
         # Expecting directories like .../checkpoint_model_000123
-        self.global_step = int(checkpoint_path.rstrip("/").split("_")[-1])
-        accum = self.accelerator.gradient_accumulation_steps
-        
-        print("loading a previous checkpoints including optimizer and random seed")
-        print(self.accelerator.load_state(checkpoint_path, strict=False))
-        self.accelerator.print(f"Loaded checkpoint from {checkpoint_path}")
-        self.step = self.global_step * max(1, accum)  # micro-step counter aligned to optimizer step
+        # self.global_step = int(checkpoint_path.rstrip("/").split("_")[-1])
+        # accum = self.accelerator.gradient_accumulation_steps
+        # 
+        # print("loading a previous checkpoints including optimizer and random seed")
+        # print(self.accelerator.load_state(checkpoint_path, strict=False))
+        # self.accelerator.print(f"Loaded checkpoint from {checkpoint_path}")
+        # self.step = self.global_step * max(1, accum)  # micro-step counter aligned to optimizer step
 
         # weights-only resume
-        # load_weights_only(checkpoint_path, self.model, accelerator=self.accelerator, strict=False)
-        # self.global_step = int(checkpoint_path.rstrip("/").split("_")[-1]) + 1
-        # accum = self.accelerator.gradient_accumulation_steps
-        # self.step = self.global_step * max(1, accum)  # micro-step counter aligned to optimizer step
-        # self.accelerator.print("Resumed weights-only; optimizer/scheduler reset.")
+        load_weights_only(checkpoint_path, self.model, accelerator=self.accelerator, strict=False)
+        self.global_step = int(checkpoint_path.rstrip("/").split("_")[-1]) + 1
+        accum = self.accelerator.gradient_accumulation_steps
+        self.step = self.global_step * max(1, accum)  # micro-step counter aligned to optimizer step
+        self.accelerator.print("Resumed weights-only; optimizer/scheduler reset.")
 
     def save(self):
         run_root = Path(self.output_path)
@@ -504,14 +597,20 @@ class Trainer:
         # NEW: naive fine-tune branch
         # ---------------------------
         if getattr(self.args, "ft_mode", "pso") == "naive":
-            # We train the student (feedforward_model) with a plain diffusion loss on *real* x0 and their true labels.
-            # Guidance/DMD/GAN are bypassed, no gradients applied to guidance_model.
+            self.model.train()
+            accelerator = self.accelerator
+            accum = accelerator.gradient_accumulation_steps  # <-- we'll use this
+
             generator_grad_norm = torch.tensor(0.0, device=accelerator.device)
 
             with accelerator.accumulate(self.model.feedforward_model):
-                # Expect a helper you added earlier; pass x0 & the *true* labels for supervised conditioning.
-                loss = self.naive_ddpm_loss(real_image.to(accelerator.device),
-                                            real_label if self.label_dim > 0 else None)
+                loss, x0_hat = self.naive_ddpm_loss(
+                    real_image.to(accelerator.device),
+                    real_label if self.label_dim > 0 else None
+                )
+
+                # 1) push THIS micro-batch into the accum buffers
+                self._mb_put({"finetune_x0_hat": x0_hat}, {"loss_dm": loss})
 
                 accelerator.backward(loss)
 
@@ -519,33 +618,22 @@ class Trainer:
                     generator_grad_norm = torch.nn.utils.clip_grad_norm_(
                         self.model.feedforward_model.parameters(), self.max_grad_norm
                     )
-                    # Step student optimizer/scheduler only
                     self.optimizer_generator.step()
                     self.optimizer_generator.zero_grad(set_to_none=True)
                     self.scheduler_generator.step()
 
-            # Minimal logging compatible with your logger
-            loss_dict = {
-                "naive_ddpm_loss": float(loss.detach().item()),
-                # Map to 'loss_dm' as well so existing plots don’t break
-                "loss_dm": float(loss.detach().item())
-            }
-            log_dict = {}  # keep empty; your logger can handle it
-            guidance_grad_norm = torch.tensor(0.0, device=accelerator.device)
+                    # 2) recompute optimizer-step index for this just-finished window
+                    self.global_step = (self.step + 1) // max(1, accum)
 
-            # Emit to W&B at your cadence
-            if self.accelerator.is_main_process and (self.global_step % self.wandb_iters == 0):
-                try:
-                    import wandb
-                    wandb.log({"naive_ddpm_loss": loss_dict["naive_ddpm_loss"]}, step=self.global_step)
-                except Exception:
-                    pass
+                    # 3) log once per window at your cadence; ALWAYS clear buffers after
+                    if (self.global_step % self.wandb_iters) == 0:
+                        self.log_finetune_window(generator_grad_norm)
+                    else:
+                        self._mb_clear()
 
-            # Housekeeping
-            self.step += 1
-            # Reuse your existing logging wrapper
-            self.log_everything(loss_dict, log_dict, generator_grad_norm, guidance_grad_norm, accum)
+            # do NOT call the big logger here
             return
+
 
         # ---------------------------
         # ORIGINAL DMD2 / GAN PATH
@@ -669,9 +757,9 @@ class Trainer:
 
             if self.accelerator.is_main_process:
                 with torch.no_grad():
-                    def agg_or_last(key):
+                    def agg_or_last(key, v=None):
                         v = batched.get(key, None)
-                        return v if v is not None else log_dict[key]
+                        return v if v is not None else log_dict.get(key, None)
 
                     # -------- tensors (aggregated if available) --------
                     generated_image         = agg_or_last('generated_image')                 # [-1,1]

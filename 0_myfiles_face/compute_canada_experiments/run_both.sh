@@ -3,8 +3,7 @@
 # -----------------------
 # Training
 # -----------------------
-
-
+ 
 train() {
   echo "[train] Starting training..."
   CUDA_VISIBLE_DEVICES=$TRAIN_GPUS torchrun \
@@ -49,9 +48,9 @@ train() {
       --gan_adv_loss "$GAN_ADV_LOSS" \
       $USE_BF16 \
       --grad_accum_steps "$GRAD_ACCUM_STEPS" \
-      --checkpoint_path "$CHECKPOINT_PATH" \ 
-      --ft_mode $FT_MODE \
-      --ddpm_steps $DDPM_STEPS
+      --checkpoint_path "$CHECKPOINT_PATH" \
+      --ft_mode "$FT_MODE" \
+      --ddpm_steps "$DDPM_STEPS"
 }
 
 # -----------------------
