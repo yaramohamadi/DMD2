@@ -5,8 +5,8 @@ LOGDIR="0_myfiles_face/slurm"
 mkdir -p "$LOGDIR"
 
 
-GEN_CLS_LOSS_WEIGHTS=(3e-2, 2e-2) # previously this was 15e-3 #  15e-2                
-CLS_LOSS_WEIGHTS=(1e-2, 1e-2) #                                                       
+GEN_CLS_LOSS_WEIGHTS=(3e-2 2e-2) # previously this was 15e-3 #  15e-2                
+CLS_LOSS_WEIGHTS=(1e-2 1e-2) #                                                       
 GEN_LRS=(2e-6)
  
 export WANDB_PROJECT="CAT_from_scratch"
