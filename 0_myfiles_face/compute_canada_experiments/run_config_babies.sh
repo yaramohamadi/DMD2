@@ -140,7 +140,7 @@ export DIFFUSION_GAN_MAX_TIMESTEP=1000
 export GEN_LR="${GEN_LR:-2e-6}"  # 2e-6
 
 export LOG_ITERS="${LOG_ITERS:-100}"
-export WANDB_ITERS=100
+export WANDB_ITERS=$LOG_ITERS
 export MAX_CHECKPOINT=100
 
 export FID_NPZ_ROOT="$PROJECT_PATH/datasets/fid_npz"
