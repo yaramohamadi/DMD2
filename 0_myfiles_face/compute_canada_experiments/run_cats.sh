@@ -5,8 +5,8 @@ LOGDIR="0_myfiles_face/slurm"
 mkdir -p "$LOGDIR"
 
 
-GEN_CLS_LOSS_WEIGHTS=(3e-2 2e-2) # previously this was 15e-3 #  15e-2
-CLS_LOSS_WEIGHTS=(1e-2 1e-2)
+GEN_CLS_LOSS_WEIGHTS=(3e-2, 2e-2) # previously this was 15e-3 #  15e-2                
+CLS_LOSS_WEIGHTS=(1e-2, 1e-2) #                                                       
 GEN_LRS=(2e-6)
  
 export WANDB_PROJECT="CAT_from_scratch"
@@ -19,6 +19,7 @@ for lr in "${GEN_LRS[@]}"; do
     tag="lr${lr}_clw${clw}_glw${glw}"
 
     echo "[LOCAL] lr=$lr  GEN_CLS_LOSS_WEIGHT=$glw  CLS_LOSS_WEIGHT=$clw  tag=$tag"
+    # export CHECKPOINT_PATH="0_myfiles_face/checkpoint_path/cat_lr2e-6_bs1_dn3_DMD1_GClsw3e-2__lr2e-6_clw1e-2_glw3e-2/checkpoint_model_003900"
     export DATASET_NAME="cat"
     export GEN_LR="$lr" 
     export GEN_CLS_LOSS_WEIGHT=$glw

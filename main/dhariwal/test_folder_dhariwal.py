@@ -522,7 +522,7 @@ def evaluate():
     evaluated_checkpoints = set()            # <- NEW: always define it
     overall_stats = {}                       # keep this too (you already have it above)
 
-    if os.path.isfile(info_path) and not args.no_resume:
+    if os.path.isfile(info_path) and not args.no_resume and False:
         with open(info_path, "r") as f:
             overall_stats = json.load(f)
         # keys are the checkpoint paths you wrote earlier
