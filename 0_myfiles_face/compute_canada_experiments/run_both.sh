@@ -78,8 +78,6 @@ test_stream_conditional() {
     ${USE_BF16:-}
 }
 
-# (optional) second test you defined but didn’t use
-test_null() { :; }
 
 TEST_PID=""
 TEST_PGID=""
@@ -126,6 +124,8 @@ trap teardown EXIT INT TERM ERR
 # -----------------------
 
 # Start test in its own process group so children share the PGID
+
+export -f test_stream_conditional
 ( setsid bash -c 'test_stream_conditional' ) &
 TEST_PID=$!
 TEST_PGID="$(ps -o pgid= "$TEST_PID" | tr -d ' ')" || true
@@ -133,3 +133,6 @@ TEST_PGID="$(ps -o pgid= "$TEST_PID" | tr -d ' ')" || true
 # Run training in foreground; on exit (success or error), EXIT trap runs teardown()
 train
 # end of script — teardown() will run via the EXIT trap with train’s exit code
+
+
+
