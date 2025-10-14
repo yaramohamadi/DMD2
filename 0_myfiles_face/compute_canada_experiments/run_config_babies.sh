@@ -54,7 +54,7 @@ fi
 
 
 # ==== fine-tune baseline ====
-export FT_MODE="${FT_MODE:-pso}"          # pso by default; we'll set 'naive' for baselines
+export FT_MODE="${FT_MODE:-naive}"          # pso by default; we'll set 'naive' for baselines
 export DDPM_STEPS="${DDPM_STEPS:-all}"    # 'all' (1000t) or 'few' (K steps)
 
 # If we're in naive baseline, you can also zero DMD and skip GAN flags:
@@ -82,8 +82,8 @@ export MASTER_PORT=$(shuf -i 20000-65000 -n 1)
 export GRAD_ACCUM_STEPS="${GRAD_ACCUM_STEPS:-4}"
 export BATCH_SIZE="${BATCH_SIZE:-1}"
 export EVAL_BATCH_SIZE=16
-export NUM_DENOISING_STEP="${NUM_DENOISING_STEP:-2}"
-export TRAIN_ITERS=40000
+export NUM_DENOISING_STEP="${NUM_DENOISING_STEP:-3}"
+export TRAIN_ITERS=80000
 export DATASET_SIZE="${DATASET_SIZE:-10}"  # 10 5 1
 
 export PROJECT_PATH="0_myfiles_face"

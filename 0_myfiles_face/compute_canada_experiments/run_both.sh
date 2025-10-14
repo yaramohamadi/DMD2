@@ -1,4 +1,5 @@
 #!/bin/bash
+set -Eeuo pipefail  # -E makes ERR traps propagate out of functions
 
 # -----------------------
 # Training
@@ -108,58 +109,60 @@ test_null() {
     $NO_LPIPS
 }
 
+TEST_PID=""
+TEST_PGID=""
 
+teardown() {
+  local code=$?
+  # prevent re-entry
+  trap - EXIT INT TERM ERR
 
-# TEST_PID=""
-# 
-# cleanup() {
-#   local code=$?
-#   if [[ -n "${TEST_PID:-}" ]] && kill -0 "$TEST_PID" 2>/dev/null; then
-#     echo "[orchestrator] stopping test (pid=$TEST_PID)"
-#     # ask nicely first
-#     kill -TERM "$TEST_PID" 2>/dev/null || true
-#     # wait up to 10s, then force if still alive
-#     for i in {1..10}; do
-#       kill -0 "$TEST_PID" 2>/dev/null || break
-#       sleep 1
-#     done
-#     kill -KILL "$TEST_PID" 2>/dev/null || true
-#   fi
-#   exit "$code"
-# }
-# 
-# trap cleanup EXIT INT TERM ERR
+  if [[ -n "${TEST_PID:-}" ]] && kill -0 "$TEST_PID" 2>/dev/null; then
+    # determine process group and kill the entire group so children die too
+    if [[ -z "${TEST_PGID:-}" ]]; then
+      TEST_PGID="$(ps -o pgid= "$TEST_PID" | tr -d ' ')"
+    fi
+    echo "[orchestrator] stopping test (pid=$TEST_PID, pgid=${TEST_PGID:-?})"
+    if [[ -n "${TEST_PGID:-}" ]]; then
+      kill -TERM "-$TEST_PGID" 2>/dev/null || true
+    else
+      kill -TERM "$TEST_PID" 2>/dev/null || true
+    fi
+    # wait up to 10s, then force kill if still alive
+    for _ in {1..10}; do
+      kill -0 "$TEST_PID" 2>/dev/null || break
+      sleep 1
+    done
+    if kill -0 "$TEST_PID" 2>/dev/null; then
+      if [[ -n "${TEST_PGID:-}" ]]; then
+        kill -KILL "-$TEST_PGID" 2>/dev/null || true
+      else
+        kill -KILL "$TEST_PID" 2>/dev/null || true
+      fi
+    fi
+    # reap
+    wait "$TEST_PID" 2>/dev/null || true
+  fi
 
+  exit "$code"
+}
 
-
+trap teardown EXIT INT TERM ERR
 
 # -----------------------
 # Orchestration
 # -----------------------
 
-# start test in background; remember PID
-test_stream_conditional &
+# Start test in its own process group so children share the PGID
+
+export -f test_stream_conditional
+( setsid bash -c 'test_stream_conditional' ) &
 TEST_PID=$!
+TEST_PGID="$(ps -o pgid= "$TEST_PID" | tr -d ' ')" || true
 
-# run training in foreground; any error triggers the trap
+# Run training in foreground; on exit (success or error), EXIT trap runs teardown()
 train
+# end of script — teardown() will run via the EXIT trap with train’s exit code
 
-# if we reach here, training finished cleanly; stop test and exit
-cleanup
 
-echo "Train finished --------------------------------------------------------------------"
-echo "------------------------------------------------------------------------------------"
-echo "------------------------------------------------------------------------------------"
-echo "------------------------------------------------------------------------------------"
-echo "------------------------------------------------------------------------------------"
-echo "------------------------------------------------------------------------------------"
-echo "------------------------------------------------------------------------------------"
-echo "------------------------------------------------------------------------------------"
-echo "------------------------------------------------------------------------------------"
-echo "------------------------------------------------------------------------------------"
-echo "------------------------------------------------------------------------------------"
-echo "------------------------------------------------------------------------------------"
-echo "------------------------------------------------------------------------------------"
-echo "------------------------------------------------------------------------------------"
-echo "------------------------------------------------------------------------------------"
-echo "------------------------------------------------------------------------------------"
+

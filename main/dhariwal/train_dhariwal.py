@@ -289,13 +289,6 @@ class Trainer:
 
         # Fine-tuning baseline
         self.ddpm_steps = args.ddpm_steps
-        if self.ddpm_steps == "few":
-            K = int(getattr(args, "num_denoising_step", 3)) 
-            # Use your guidance hyperparams as bounds:
-            smin = self.model.guidance_model.sigma_min
-            smax = self.model.guidance_model.sigma_max
-            few = get_sigmas_karras(K, smin, smax)[::-1].to(self.accelerator.device)  # high→low
-            self.register_buffer("few_sigmas", few)  # [K]
 
     # ---------- Fine-tuning baseline: DDPM loss on random noise levels ----------
     def _sigma_from_t(self, t_idx: torch.Tensor) -> torch.Tensor:
@@ -304,66 +297,59 @@ class Trainer:
         alpha_bar = acp[t_idx]  # [B]
         return torch.sqrt(1.0 / alpha_bar - 1.0)
 
-
-    # fine-tuning loss function 
+    # ---------- Fine-tuning baseline: DDPM loss on random noise levels ----------
     def naive_ddpm_loss(self, x0: torch.Tensor, labels=None) -> torch.Tensor:
         """
-        Plain DDPM-style loss on a distilled k-step student:
-        - If self.ddpm_steps == 'few', restrict t to the student's few-step schedule.
-        - Else sample t ~ Uniform({0,...,T-1}).
-        Works with the DhariwalUNetAdapter that predicts x0_hat from EDM-corrupted x.
+        Plain DDPM-style loss on the student, restricted to the model's fixed K-step
+        schedule when ddpm_steps == 'few'. No sigma_min/max; uses the same K sigmas
+        as your generator unroll (_make_sigma_schedule).
         """
         accelerator = self.accelerator
-        ff = accelerator.unwrap_model(self.model.feedforward_model)  # unwrap DDP
-        # DDPM cumulative ᾱ_t (length T, typically 1000). Registered on the adapter.
-        alphas_cumprod = ff.alphas_cumprod.to(x0.device, dtype=x0.dtype)
+        ff = accelerator.unwrap_model(self.model.feedforward_model)
+        alphas_cumprod = ff.alphas_cumprod.to(x0.device, dtype=x0.dtype)  # [T]
         T = alphas_cumprod.shape[0]
-
         B = x0.size(0)
 
-        # --- choose timesteps ---
         few_mode = getattr(self, "ddpm_steps", "all") == "few"
         if few_mode:
-            # Use the student's few denoising steps.
-            # We map the student's σ-grid to nearest DDPM t-indices.
-            # Prefer the σs already on your guidance/Unified model if present.
-            # (Trainer sees self.model.karras_sigmas via DhariwalGuidance). :contentReference[oaicite:2]{index=2}
-            sigmas_full = getattr(self.model, "karras_sigmas", None)
-            K = int(getattr(self, "num_denoising_step", 4))
-            if sigmas_full is not None and sigmas_full.numel() >= K:
-                # pick K roughly evenly spaced σ’s across the schedule
-                idxs = torch.linspace(0, sigmas_full.numel() - 1, steps=K, device=x0.device).round().long()
-                sigmas_k = sigmas_full[idxs].to(x0.device, x0.dtype)
-                # map σ -> nearest t via ᾱ_target = 1/(1+σ^2) and nearest in alphas_cumprod
-                alpha_target = 1.0 / (1.0 + sigmas_k**2)                       # [K]
-                d = (alpha_target[:, None] - alphas_cumprod[None, :]).abs()    # [K, T]
-                t_pool = torch.argmin(d, dim=1)                                 # [K] int
-            else:
-                # fallback: K linearly spaced timesteps
-                t_pool = torch.linspace(0, T - 1, steps=K, device=x0.device).round().long()
-            # sample each batch item from the K-step pool
+            # Build the exact same K fixed sigmas your generator uses.
+            K = int(getattr(self, "num_denoising_step", getattr(self.model, "num_denoising_step", 1)))
+            # Start at your runtime conditioning sigma (same as train loop):
+            cond_sigma = torch.full((B,), float(self.conditioning_sigma), device=x0.device, dtype=x0.dtype)
+            sigma_end  = float(getattr(self.model, "denoising_sigma_end", 0.5))
+            with torch.no_grad():
+                # [K, B] monotonically decreasing
+                sigmas_KB = self.model._make_sigma_schedule(cond_sigma, K, sigma_end)  # [K,B]
+                # Map each sigma to ᾱ_target = 1/(1+σ^2), then nearest DDPM t
+                alpha_target = 1.0 / (1.0 + (sigmas_KB**2))           # [K,B]
+                # Use a single (global) t per K by averaging over batch, to keep anchors aligned
+                alpha_target_mean = alpha_target.mean(dim=1)          # [K]
+                d = (alpha_target_mean[:, None] - alphas_cumprod[None, :]).abs()  # [K,T]
+                t_pool = torch.argmin(d, dim=1)                       # [K] integer DDPM steps
+
+            # sample per-example t from the fixed K pool
             pick = torch.randint(0, t_pool.numel(), (B,), device=x0.device)
             t = t_pool[pick]
         else:
+            # Full-grid DDPM sampling
             t = torch.randint(0, T, (B,), device=x0.device)
 
-        # --- DDPM forward corruption (x_t = sqrt(ᾱ_t) x0 + sqrt(1-ᾱ_t) ε) written in EDM form ---
-        alpha_bar = alphas_cumprod.gather(0, t).clamp(min=1e-6, max=1.0)   # [B]
-        # Convert to EDM sigma that your adapter expects: sigma^2 = 1/ᾱ - 1
-        sigma = torch.sqrt(torch.clamp(1.0 / alpha_bar - 1.0, min=0.0))    # [B]
-        # Avoid division by 0 when recovering ε̂ later
+        # --- standard DDPM corruption in EDM parameterization ---
+        alpha_bar = alphas_cumprod.gather(0, t).clamp(min=1e-6, max=1.0)  # [B]
+        sigma = torch.sqrt(torch.clamp(1.0 / alpha_bar - 1.0, min=0.0))   # [B]
         sigma_safe = sigma.clamp_min(1e-3)
 
         eps = torch.randn_like(x0)
-        x = x0 + sigma.view(B, 1, 1, 1) * eps  # EDM corruption that adapter expects
+        x   = x0 + sigma.view(B, 1, 1, 1) * eps  # EDM corruption
 
-        # --- predict x0_hat using your adapter (handles EDM→DDPM mapping internally) ---
-        x0_hat = self.model.feedforward_model(x, sigma, labels)  # works under DDP
+        # Predict x0_hat with your adapter
+        x0_hat = self.model.feedforward_model(x, sigma, labels)
 
-        # Recover ε̂ = (x - x0_hat)/σ and do the standard ε-MSE objective
+        # ε̂ = (x - x0_hat)/σ, ε-MSE loss
         eps_hat = (x - x0_hat) / sigma_safe.view(B, 1, 1, 1)
         loss = F.mse_loss(eps_hat, eps, reduction="mean")
         return loss, x0_hat
+
     # ----------------------------------------------------------------
     
     def log_finetune_window(self, generator_grad_norm):

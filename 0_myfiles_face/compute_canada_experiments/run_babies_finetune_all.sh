@@ -7,12 +7,12 @@ mkdir -p "$LOGDIR"
 
 GEN_CLS_LOSS_WEIGHT=(15e-3)
 CLS_LOSS_WEIGHT=(5e-2)
-GEN_LR=(2e-6)
+GEN_LR=(2e-5 1e-4)
 
 export WANDB_PROJECT="Babies_FINETUNE"
 
 # paired sweep, local runs
-for dd in all few; do
+for dd in all; do
   for lr in "${GEN_LR[@]}"; do
     for i in "${!GEN_CLS_LOSS_WEIGHT[@]}"; do
       glw="${GEN_CLS_LOSS_WEIGHT[$i]}"
@@ -24,8 +24,8 @@ for dd in all few; do
       # Finetune baseline settings -------
       export FT_MODE="naive"
       export DDPM_STEPS="$dd"
-      export TOTAL_EVAL_SAMPLES=100
-      export LOG_ITERS=5
+      export TOTAL_EVAL_SAMPLES=5000
+      export LOG_ITERS=100
       # ----------------------------------
       export CHECKPOINT_PATH="0_myfiles_face/checkpoint_path/FFHQ_distilled_weights/checkpoint_model_037200/"
       export DATASET_NAME="babies"
@@ -37,9 +37,9 @@ for dd in all few; do
       export BATCH_SIZE=1
       if [[ "$dd" == "few" ]]; then export NUM_DENOISING_STEP=3; fi
       export EXTRA_TAG="_naive_${dd}"  # gets extended inside run_config_babies.sh
-      export CUDA_VISIBLE_DEVICES=2,3
-      export TRAIN_GPUS=2
-      export TEST_GPUS=3
+      export CUDA_VISIBLE_DEVICES=0,1
+      export TRAIN_GPUS=0
+      export TEST_GPUS=1
       export NPROC_PER_NODE=1
       export NNODES=1 
       bash "$CHILD"
