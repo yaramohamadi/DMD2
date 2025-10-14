@@ -4,7 +4,7 @@ CHILD="0_myfiles_face/compute_canada_experiments/run_config_babies.sh"
 SLURM_LOG_DIR="0_myfiles_face/slurm"
 mkdir -p "$SLURM_LOG_DIR"
 
-LOSSES=("wgan") # "bce" 
+LOSSES=("wgan" "bce") 
 
 WANDB_PROJECT="DMD_babies_gan_sweep"
 
@@ -26,7 +26,7 @@ for loss in "${LOSSES[@]}"; do
     export WANDB_PROJECT="$WANDB_PROJECT" 
     export EXTRA_TAG="_${tag}" 
     export CUDA_VISIBLE_DEVICES=2,3
-    export TRAIN_GPUS=2
+    export TRAIN_GPUS=3
     export TEST_GPUS=3
     export NPROC_PER_NODE=1
     export NNODES=1
