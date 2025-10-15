@@ -85,6 +85,7 @@ export EVAL_BATCH_SIZE=16
 export NUM_DENOISING_STEP="${NUM_DENOISING_STEP:-3}"
 export TRAIN_ITERS=80000
 export DATASET_SIZE="${DATASET_SIZE:-10}"  # 10 5 1
+export SAMPLER=${SAMPLER:-} # oneshot, karras, ddim
 
 export PROJECT_PATH="0_myfiles_face"
 export DATASET_NAME="${DATASET_NAME:-"babies"}"

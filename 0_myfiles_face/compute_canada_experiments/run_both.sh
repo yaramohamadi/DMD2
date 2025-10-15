@@ -5,6 +5,14 @@ set -Eeuo pipefail  # -E makes ERR traps propagate out of functions
 # Training
 # -----------------------
  
+
+ # Build optional denoising flags for K-step only
+DEN_ARGS=()
+if [[ "${DDPM_STEPS:-all}" == "few" ]]; then
+  DEN_ARGS+=(--denoising --num_denoising_step "${NUM_DENOISING_STEP:?}" --denoising_sigma_end "${DENOISING_SIGMA_END:?}")
+fi
+
+
 train() {
   echo "[train] Starting training..."
   CUDA_VISIBLE_DEVICES=$TRAIN_GPUS torchrun \
@@ -39,9 +47,6 @@ train() {
       --diffusion_gan_max_timestep $DIFFUSION_GAN_MAX_TIMESTEP \
       --delete_ckpts \
       --max_checkpoint $MAX_CHECKPOINT \
-      --denoising \
-      --num_denoising_step $NUM_DENOISING_STEP \
-      --denoising_sigma_end $DENOISING_SIGMA_END \
       --label_dropout_p $LABEL_DROPOUT_P \
       $GAN_MULTIHEAD \
       --gan_head_type "$GAN_HEAD_TYPE" \
@@ -51,7 +56,8 @@ train() {
       --grad_accum_steps "$GRAD_ACCUM_STEPS" \
       --checkpoint_path "$CHECKPOINT_PATH" \
       --ft_mode "$FT_MODE" \
-      --ddpm_steps "$DDPM_STEPS"
+      --ddpm_steps "$DDPM_STEPS" \
+      "${DEN_ARGS[@]}"
 }
 
 # -----------------------
@@ -79,7 +85,9 @@ test_stream_conditional() {
     --num_denoising_step $NUM_DENOISING_STEP \
     $BEST_FLAG \
     $NO_LPIPS \
-    $USE_BF16
+    $USE_BF16 \
+    --sampler $SAMPLER \
+    --ddim_steps 25
 }
 
 # -----------------------

@@ -7,16 +7,18 @@ mkdir -p "$LOGDIR"
 
 GEN_CLS_LOSS_WEIGHTS=(15e-3)
 CLS_LOSS_WEIGHTS=(5e-2)
-GEN_LRS=(2e-7 2e-6)
+GEN_LRS=(2e-6 2e-5 1e-4)
+export DDPM_STEPS=all
+export SAMPLER="ddim"
 
-export WANDB_PROJECT="Babies_FINETUNE"
+export WANDB_PROJECT="Babies_FINETUNE_no_distill"
 
 # paired sweep, local runs
 for dd in all; do
   for lr in "${GEN_LRS[@]}"; do
     for i in "${!GEN_CLS_LOSS_WEIGHTS[@]}"; do
       glw="${GEN_CLS_LOSS_WEIGHTS[$i]}"
-      clw="${CLS_LOSS_WEIGHT[$i]}"
+      clw="${CLS_LOSS_WEIGHTS[$i]}"
       tag="lr${lr}_clw${clw}_glw${glw}"
 
       echo "[LOCAL] lr=$lr  GEN_CLS_LOSS_WEIGHT=$glw  CLS_LOSS_WEIGHT=$clw  tag=$tag"
@@ -27,7 +29,6 @@ for dd in all; do
       export TOTAL_EVAL_SAMPLES=5000
       export LOG_ITERS=100
       # ----------------------------------
-      export CHECKPOINT_PATH="0_myfiles_face/checkpoint_path/FFHQ_distilled_weights/checkpoint_model_037200/"
       export DATASET_NAME="babies"
       export GEN_LR="$lr" 
       export GEN_CLS_LOSS_WEIGHT="$glw" 

@@ -620,11 +620,9 @@ class Trainer:
             # do NOT call the big logger here
             return
 
-
         # ---------------------------
         # ORIGINAL DMD2 / GAN PATH
         # ---------------------------
-
         scaled_noise = torch.randn(
             self.batch_size, 3, self.resolution, self.resolution, device=accelerator.device
         ) * self.conditioning_sigma

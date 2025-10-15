@@ -436,6 +436,7 @@ def _safe_rmtree(path: Path, retries: int = 6, base_delay: float = 0.2):
             return True
         except OSError as e:
             # ENOTEMPTY or other transient error → backoff
+            import time
             time.sleep(base_delay * (2 ** i))
     return False
 

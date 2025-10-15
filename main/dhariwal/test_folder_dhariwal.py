@@ -248,7 +248,6 @@ def _re_noise(x0: torch.Tensor, sigma_next: torch.Tensor) -> torch.Tensor:
 
 
 
-
 @torch.no_grad()
 def sample(accelerator, current_model, args, model_index):
     """
@@ -260,10 +259,8 @@ def sample(accelerator, current_model, args, model_index):
     bs    = args.eval_batch_size
     total = args.total_eval_samples
 
-    # How many synchronized steps do we need if every rank makes `bs` images each step?
     steps = math.ceil(total / float(bs * world))
 
-    # Make the model fast for inference
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
     torch.backends.cudnn.benchmark = True
@@ -275,10 +272,8 @@ def sample(accelerator, current_model, args, model_index):
     def make_labels(B, step_offset=0):
         if Lm == 0 or args.label_mode == "uncond":
             return None
-        # number of real classes (exclude NULL if present)
         K_real   = Lm - 1 if args.has_null else Lm
         null_idx = Lm - 1 if args.has_null else None
-        # choose class indices
         if args.label_mode == "uniform":
             idx = torch.randint(0, K_real, (B,), device=dev)
         elif args.label_mode == "const":
@@ -292,65 +287,110 @@ def sample(accelerator, current_model, args, model_index):
             idx = torch.full((B,), null_idx, device=dev)
         else:
             raise ValueError(f"Unknown label_mode: {args.label_mode}")
-        # to one-hot
         y = torch.zeros(B, Lm, device=dev, dtype=torch.float32)
         y.scatter_(1, idx.view(-1,1), 1.0)
         return y
 
-    # only rank 0 collects into CPU memory
+    # Pre-compute DDIM schedule pieces once if needed
+    t_seq = None
+    acp   = None  # alphas_cumprod
+    if getattr(args, "sampler", "ddim") == "ddim":
+        # unwrap to reach adapter attributes
+        ff = accelerator.unwrap_model(current_model)
+        if not hasattr(ff, "alphas_cumprod"):
+            raise AttributeError("current_model (adapter) must expose .alphas_cumprod for DDIM.")
+        acp = ff.alphas_cumprod.to(dev)  # [T] (T typically = 1000)
+        T = acp.numel()
+        stride = int(np.ceil(T / float(args.ddim_steps)))
+        # descending t-sequence (T-1 -> 0), then truncate to ddim_steps
+        t_seq = torch.arange(T - 1, -1, -stride, device=dev).clamp_min(0)
+        t_seq = t_seq[:args.ddim_steps]
+
     rank0_chunks = []
     if accelerator.is_main_process:
         pbar = tqdm(total=total, desc=f"Sampling {total} @ {args.resolution}", ncols=100)
-    
-    # Supporting both 1 step and multi-step
+
     for _ in range(steps):
         cur = bs
 
-        if (not args.denoising) or (args.num_denoising_step <= 1):
-            # -------- one-step path (existing behavior) --------
-            t = torch.full((cur,), args.conditioning_sigma, device=dev)
-            noise = torch.randn(cur, 3, args.resolution, args.resolution, device=dev)
-            imgs = current_model(noise * args.conditioning_sigma, t, make_labels(cur, step_offset=_))  # [-1,1], NCHW
-        else:
-            # -------- few-step (K-step) unrolled path --------
-            K = int(max(1, args.num_denoising_step))
-            # start at sigma0 = conditioning_sigma (per-sample)
-            sigma0 = torch.full((cur,), args.conditioning_sigma, device=dev)
-            # initial x is pure noise at sigma0
-            x = torch.randn(cur, 3, args.resolution, args.resolution, device=dev) * sigma0.view(-1,1,1,1)
+        # =========================
+        # === GENERATION BRANCH ===
+        # =========================
+        if getattr(args, "sampler", None) == "ddim":
+            # ----- DDIM (η=0): 25 steps on the native DDPM grid -----
+            # start from standard normal (x_{T-1})
+            x = torch.randn(cur, 3, args.resolution, args.resolution, device=dev)
             y = make_labels(cur, step_offset=_)
 
-            # build decreasing schedule [K, B] from sigma0 -> denoising_sigma_end
-            sigmas = _make_sigma_schedule(sigma0, K, args.denoising_sigma_end)
+            for i, t in enumerate(t_seq):
+                alpha_bar_t = acp[t]  # scalar tensor
+                sqrt_ab_t   = torch.sqrt(alpha_bar_t)
+                sqrt_1mab_t = torch.sqrt(torch.clamp(1.0 - alpha_bar_t, min=1e-8))
 
+                # map ᾱ_t -> σ_t for your adapter’s (x, sigma, y) signature
+                sigma_t = torch.sqrt(torch.clamp(1.0 / alpha_bar_t - 1.0, min=0.0))
+                sigma_t_b = sigma_t.expand(cur)  # [B]
+
+                # predict x0 at step t
+                x0_hat = current_model(x, sigma_t_b, y)  # NCHW in [-1,1]
+
+                # ε̂_t = (x_t - sqrt(ᾱ_t) * x0_hat) / sqrt(1-ᾱ_t)
+                eps_hat = (x - sqrt_ab_t * x0_hat) / sqrt_1mab_t
+
+                # last DDIM step -> take x0
+                if i + 1 == len(t_seq):
+                    x = x0_hat
+                    break
+
+                # move to next (lower) t'
+                alpha_bar_next = acp[t_seq[i + 1]]
+                sqrt_ab_next   = torch.sqrt(alpha_bar_next)
+                sqrt_1mab_next = torch.sqrt(torch.clamp(1.0 - alpha_bar_next, min=1e-8))
+
+                # deterministic DDIM update (η=0)
+                x = sqrt_ab_next * x0_hat + sqrt_1mab_next * eps_hat
+
+            imgs = x
+
+        elif (not args.denoising) or (args.num_denoising_step <= 1):
+            # ----- one-step path (existing) -----
+            t = torch.full((cur,), args.conditioning_sigma, device=dev)
+            noise = torch.randn(cur, 3, args.resolution, args.resolution, device=dev)
+            imgs = current_model(noise * args.conditioning_sigma, t, make_labels(cur, step_offset=_))
+        else:
+            # ----- your K-step unrolled (stochastic) path -----
+            K = int(max(1, args.num_denoising_step))
+            sigma0 = torch.full((cur,), args.conditioning_sigma, device=dev)
+            x = torch.randn(cur, 3, args.resolution, args.resolution, device=dev) * sigma0.view(-1,1,1,1)
+            y = make_labels(cur, step_offset=_)
+            sigmas = _make_sigma_schedule(sigma0, K, args.denoising_sigma_end)
             last_x0 = None
             for i in range(K):
-                si = sigmas[i]                     # [B]
-                # predict x0 at this sigma (your Dhariwal adapter returns x0)
-
-                x0_hat = current_model(x, si, y)   # [-1,1], NCHW
+                si = sigmas[i]
+                x0_hat = current_model(x, si, y)
                 last_x0 = x0_hat
                 if i + 1 < K:
-                    s_next = sigmas[i + 1]         # [B]
-                    x = _re_noise(x0_hat, s_next)  # re-noise back up to next sigma
+                    s_next = sigmas[i + 1]
+                    x = _re_noise(x0_hat, s_next)  # stochastic ancestral step
             imgs = last_x0
+        # =========================
+        # === END GEN BRANCH    ===
+        # =========================
 
-        imgs_u8 = ((imgs + 1.0) * 127.5).clamp(0, 255).to(torch.uint8)     # NCHW
-        imgs_u8 = imgs_u8.permute(0, 2, 3, 1).contiguous()                  # NHWC
+        imgs_u8 = ((imgs + 1.0) * 127.5).clamp(0, 255).to(torch.uint8)  # NCHW
+        imgs_u8 = imgs_u8.permute(0, 2, 3, 1).contiguous()              # NHWC
 
         gathered = accelerator.gather(imgs_u8)
         if accelerator.is_main_process:
             rank0_chunks.append(gathered.cpu())
             pbar.update(gathered.size(0))
 
-    
     if accelerator.is_main_process:
         pbar.close()
-        all_images_tensor = torch.cat(rank0_chunks, dim=0)[:total]  # [N, H, W, 3] uint8 on CPU
+        all_images_tensor = torch.cat(rank0_chunks, dim=0)[:total]  # [N,H,W,3] uint8, CPU
 
-        # build a preview grid with an auto grid size (near-square)
         n = all_images_tensor.size(0)
-        g = int(np.floor(np.sqrt(min(100, n))))  # cap grid to 100 cells
+        g = int(np.floor(np.sqrt(min(100, n))))
         g = max(1, g)
         grid = all_images_tensor[:g*g].numpy().reshape(g, g, args.resolution, args.resolution, 3)
         grid = np.swapaxes(grid, 1, 2).reshape(g*args.resolution, g*args.resolution, 3)
@@ -364,10 +404,11 @@ def sample(accelerator, current_model, args, model_index):
             "eval/model_label_dim": float(Lm),
         }, step=model_index)
     else:
-        all_images_tensor = torch.empty(0, dtype=torch.uint8)  # non-main returns empty placeholder
+        all_images_tensor = torch.empty(0, dtype=torch.uint8)
 
     accelerator.wait_for_everyone()
     return all_images_tensor
+
 
 
 @torch.no_grad()
@@ -497,7 +538,11 @@ def evaluate():
     parser.add_argument("--denoising_sigma_end", type=float, default=0.5,
                         help="Terminal sigma for the unrolled schedule.")
     parser.add_argument("--use_bf16", action="store_true")
-    
+    parser.add_argument("--sampler", choices=["oneshot","karras","ddim"], default="karras",
+                    help="oneshot: single step; karras: your K-step loop; ddim: 25-step DDIM")
+    parser.add_argument("--ddim_steps", type=int, default=25,
+                        help="Number of DDIM steps (e.g., 25)")
+        
 
 
     args = parser.parse_args()

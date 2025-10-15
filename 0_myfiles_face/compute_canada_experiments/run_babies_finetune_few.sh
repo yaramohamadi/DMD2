@@ -5,17 +5,17 @@ LOGDIR="0_myfiles_face/slurm"
 mkdir -p "$LOGDIR"
 
 
-GEN_CLS_LOSS_WEIGHT=(15e-3)
-CLS_LOSS_WEIGHT=(5e-2)
-GEN_LR=(2e-5 1e-4)
+GEN_CLS_LOSS_WEIGHTS=(15e-3)
+CLS_LOSS_WEIGHTS=(5e-2)
+GEN_LRS=(2e-7 2e-6)
 
 export WANDB_PROJECT="Babies_FINETUNE"
 
 # paired sweep, local runs
 for dd in few; do
-  for lr in "${GEN_LR[@]}"; do
-    for i in "${!GEN_CLS_LOSS_WEIGHT[@]}"; do
-      glw="${GEN_CLS_LOSS_WEIGHT[$i]}"
+  for lr in "${GEN_LRS[@]}"; do
+    for i in "${!GEN_CLS_LOSS_WEIGHTS[@]}"; do
+      glw="${GEN_CLS_LOSS_WEIGHTS[$i]}"
       clw="${CLS_LOSS_WEIGHT[$i]}"
       tag="lr${lr}_clw${clw}_glw${glw}"
 
@@ -32,7 +32,6 @@ for dd in few; do
       export GEN_LR="$lr" 
       export GEN_CLS_LOSS_WEIGHT="$glw" 
       export CLS_LOSS_WEIGHT="$clw" 
-      export GEN_LR="${GEN_LR[0]}" 
       export GRAD_ACCUM_STEPS=4
       export BATCH_SIZE=1
       if [[ "$dd" == "few" ]]; then export NUM_DENOISING_STEP=3; fi
