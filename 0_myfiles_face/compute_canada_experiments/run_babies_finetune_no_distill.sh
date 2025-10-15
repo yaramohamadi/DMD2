@@ -37,9 +37,9 @@ for dd in all; do
       export BATCH_SIZE=1
       if [[ "$dd" == "few" ]]; then export NUM_DENOISING_STEP=3; fi
       export EXTRA_TAG="_naive_${dd}"  # gets extended inside run_config_babies.sh
-      export CUDA_VISIBLE_DEVICES=0
+      export CUDA_VISIBLE_DEVICES=0,1
       export TRAIN_GPUS=0
-      export TEST_GPUS=0
+      export TEST_GPUS=1
       export NPROC_PER_NODE=1
       export NNODES=1 
       bash "$CHILD"
