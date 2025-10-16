@@ -64,7 +64,7 @@ export BATCH_SIZE="${BATCH_SIZE:-1}"
 export EVAL_BATCH_SIZE=1
 export NUM_DENOISING_STEP="${NUM_DENOISING_STEP:-3}"
 
-export TRAIN_ITERS=200000
+export TRAIN_ITERS=260000
 
 export PROJECT_PATH="0_myfiles_face"
 export DATASET_NAME="${DATASET_NAME:-"FFHQ"}"
@@ -85,6 +85,7 @@ export EXP_TRAIN_MODE="${EXP_TRAIN_MODE:-V0}"   # one of: V0, V1, V2
 export K="${K:-10}"                              # number of real pseudo-classes
 export LABEL_DROPOUT_P="${LABEL_DROPOUT_P:-0.30}"
 
+export SAMPLER="${SAMPLER:-karras}"  # ddim or plms
 # V1: Unconditional training and unconditional sampling 
 # V2: Conditional training and conditional sampling
 # V3: Conditional training with null and conditional sampling (But only sampling from classes and not null)

@@ -63,6 +63,7 @@ train() {
 # -----------------------
 # Testing (streaming conditional)
 # -----------------------
+
 test_stream_conditional() {
   echo "[test] Starting streaming conditional (uniform) evaluation..."
   CUDA_VISIBLE_DEVICES=$TEST_GPUS python -u main/dhariwal/test_folder_dhariwal.py \
