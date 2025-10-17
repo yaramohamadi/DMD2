@@ -10,6 +10,7 @@ from accelerate.utils import ProjectConfiguration
 from diffusers.optimization import get_scheduler
 from main.data.lmdb_dataset import LMDBDataset
 from main.dhariwal.dhariwal_unified_model import dhariwalUniModel
+from guided_diffusion.gaussian_diffusion import (GaussianDiffusion, get_named_beta_schedule, ModelMeanType, ModelVarType, LossType)
 from main.dhariwal.dhariwal_guidance import get_sigmas_karras 
 from accelerate.utils import set_seed
 from accelerate import Accelerator
@@ -105,6 +106,32 @@ def load_weights_only(checkpoint_dir, model, accelerator=None, strict=False):
     if unexpected: print("Unexpected sample:", unexpected)
 
     return missing, unexpected
+
+
+class _X0AdapterWrapper(torch.nn.Module):
+    def __init__(self, feedforward_model, alphas_cumprod):
+        super().__init__()
+        self.net = feedforward_model
+        self.register_buffer("alphas_cumprod", alphas_cumprod)  # [T]
+
+    def _t_to_sigma(self, t, x_shape):
+        # handle float or int timesteps
+        if t.dtype.is_floating_point:
+            # map e.g. 0..1000 floats back to [0, T-1]
+            T = self.alphas_cumprod.shape[0]
+            t = (t * (T / 1000.0)).round().clamp_(0, T - 1).long()
+        else:
+            t = t.long()
+
+        alpha_bar = self.alphas_cumprod[t].view(-1, *([1] * (len(x_shape) - 1)))
+        sigma = torch.sqrt(torch.clamp(1.0 / alpha_bar - 1.0, min=0.0))
+        return sigma.squeeze()
+
+    def forward(self, x_t, t, y=None, **kwargs):
+        if y is None and "y" in kwargs:
+            y = kwargs["y"]
+        sigma = self._t_to_sigma(t, x_t.shape)
+        return self.net(x_t, sigma, y)
 
 
 
@@ -289,6 +316,24 @@ class Trainer:
 
         # Fine-tuning baseline
         self.ddpm_steps = args.ddpm_steps
+
+        # 1000-step cosine schedule (matches common practice)
+        betas = get_named_beta_schedule("cosine", self.num_train_timesteps)  # 1000
+        self.gd = GaussianDiffusion(
+            betas=betas,
+            model_mean_type=ModelMeanType.START_X,   # our wrapper will return x0
+            model_var_type=ModelVarType.FIXED_SMALL, # standard fixed variance
+            loss_type=LossType.MSE,                  # x0-MSE (common, stable)
+            rescale_timesteps=True                   # passes t scaled like 0..1000
+        )
+
+        # cache torch versions used by the wrapper / mapper
+        self.gd_alphas_cumprod = torch.from_numpy(self.gd.alphas_cumprod).to(self.accelerator.device).float()
+
+        self.model_wrapped = _X0AdapterWrapper(self.model.feedforward_model, self.gd_alphas_cumprod)
+
+
+
 
     # ---------- Fine-tuning baseline: DDPM loss on random noise levels ----------
     def _sigma_from_t(self, t_idx: torch.Tensor) -> torch.Tensor:
@@ -584,23 +629,33 @@ class Trainer:
         # ---------------------------
         if getattr(self.args, "ft_mode", "pso") == "naive":
             self.model.train()
-            accelerator = self.accelerator
-            accum = accelerator.gradient_accumulation_steps  # <-- we'll use this
+            generator_grad_norm = torch.tensor(0.0, device=self.accelerator.device)
 
-            generator_grad_norm = torch.tensor(0.0, device=accelerator.device)
+            with self.accelerator.accumulate(self.model.feedforward_model):
+                # prepare labels (one-hot or None) exactly as you already do
+                x0 = real_image.to(self.accelerator.device)
+                y  = real_label if self.label_dim > 0 else None
 
-            with accelerator.accumulate(self.model.feedforward_model):
-                loss, x0_hat = self.naive_ddpm_loss(
-                    real_image.to(accelerator.device),
-                    real_label if self.label_dim > 0 else None
-                )
+                # sample integer timesteps uniformly over 0..T-1
+                B = x0.size(0)
+                t = torch.randint(0, self.gd.num_timesteps, (B,), device=x0.device, dtype=torch.long)
 
-                # 1) push THIS micro-batch into the accum buffers
+                # GaussianDiffusion expects model(x_t, t_scaled, **kwargs)
+                # Provide labels via model_kwargs if you prefer; we pass as positional here.
+                losses = self.gd.training_losses(self.model_wrapped, x0, t, model_kwargs={"y": y})
+                loss = losses["loss"].mean()
+
+                # (optional) get a viz x0_hat for logging (recompute cheaply)
+                with torch.no_grad():
+                    # rebuild x_t with the same noise to visualize prediction
+                    noise = torch.randn_like(x0)
+                    x_t = self.gd.q_sample(x0, t, noise=noise)
+                    x0_hat = self.model_wrapped(x_t, t, y)
+
                 self._mb_put({"finetune_x0_hat": x0_hat}, {"loss_dm": loss})
 
-                accelerator.backward(loss)
-
-                if accelerator.sync_gradients:
+                self.accelerator.backward(loss)
+                if self.accelerator.sync_gradients:
                     generator_grad_norm = torch.nn.utils.clip_grad_norm_(
                         self.model.feedforward_model.parameters(), self.max_grad_norm
                     )
@@ -608,16 +663,11 @@ class Trainer:
                     self.optimizer_generator.zero_grad(set_to_none=True)
                     self.scheduler_generator.step()
 
-                    # 2) recompute optimizer-step index for this just-finished window
-                    self.global_step = (self.step + 1) // max(1, accum)
-
-                    # 3) log once per window at your cadence; ALWAYS clear buffers after
+                    self.global_step = (self.step + 1) // max(1, self.accelerator.gradient_accumulation_steps)
                     if (self.global_step % self.wandb_iters) == 0:
                         self.log_finetune_window(generator_grad_norm)
                     else:
                         self._mb_clear()
-
-            # do NOT call the big logger here
             return
 
         # ---------------------------

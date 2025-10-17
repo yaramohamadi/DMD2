@@ -7,7 +7,7 @@ mkdir -p "$LOGDIR"
 
 GEN_CLS_LOSS_WEIGHTS=(15e-3)
 CLS_LOSS_WEIGHTS=(5e-2)
-GEN_LRS=(2e-6)
+GEN_LRS=(2e-7)
 export DDPM_STEPS=all
 export SAMPLER="ddim"
 
@@ -37,7 +37,7 @@ for dd in all; do
       export BATCH_SIZE=1
       if [[ "$dd" == "few" ]]; then export NUM_DENOISING_STEP=3; fi
       export EXTRA_TAG="_naive_${dd}"  # gets extended inside run_config_babies.sh
-      export CUDA_VISIBLE_DEVICES=0,1
+      export CUDA_VISIBLE_DEVICES=2,3
       export TRAIN_GPUS=0
       export TEST_GPUS=1
       export NPROC_PER_NODE=1
