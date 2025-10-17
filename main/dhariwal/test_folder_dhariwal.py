@@ -331,8 +331,9 @@ def sample(accelerator, current_model, args, model_index):
                 sigma_t = torch.sqrt(torch.clamp(1.0 / alpha_bar_t - 1.0, min=0.0))
                 sigma_t_b = sigma_t.expand(cur)  # [B]
 
-                # predict x0 at step t
-                x0_hat = current_model(x, sigma_t_b, y)  # NCHW in [-1,1]
+                # AFTER (convert DDPM x_t -> EDM x)
+                x_for_model = x / sqrt_ab_t.view(-1, 1, 1, 1)     # x = x_t / sqrt(alpha_bar_t)
+                x0_hat = current_model(x_for_model, sigma_t_b, y) # now consistent
 
                 # ε̂_t = (x_t - sqrt(ᾱ_t) * x0_hat) / sqrt(1-ᾱ_t)
                 eps_hat = (x - sqrt_ab_t * x0_hat) / sqrt_1mab_t
@@ -792,7 +793,7 @@ def evaluate():
 
                     # prec, rec = evaluator.calc_precision_recall(nearest_k=5)
 
-                    fid_score = 0 #evaluator.calc_fid()
+                    fid_score = 0# evaluator.calc_fid()
                     prec = 0
                     rec = 0
 

@@ -26,7 +26,7 @@ for dd in all; do
       # Finetune baseline settings -------
       export FT_MODE="naive"
       export DDPM_STEPS="$dd"
-      export TOTAL_EVAL_SAMPLES=5000
+      export TOTAL_EVAL_SAMPLES=100 # 5000
       export LOG_ITERS=100
       # ----------------------------------
       export DATASET_NAME="babies"
