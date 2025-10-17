@@ -790,13 +790,18 @@ def evaluate():
 
                 stats = {}
                 if accelerator.is_main_process:
-                    evaluator = Evaluator(eval_args, imgs_nchw_f01, ref_npz_path, args.lpips_cluster_size)
+                    # evaluator = Evaluator(eval_args, imgs_nchw_f01, ref_npz_path, args.lpips_cluster_size)
 
                     # prec, rec = evaluator.calc_precision_recall(nearest_k=5)
+<<<<<<< HEAD
                     if args.total_eval_samples == 100:
                         fid_score = 0
                     else:
                         fid_score = evaluator.calc_fid()
+=======
+
+                    fid_score = 0 #evaluator.calc_fid()
+>>>>>>> ec63f51d7c1367ad83378af43915e66500ac3f36
                     prec = 0
                     rec = 0
 
@@ -820,10 +825,14 @@ def evaluate():
                     if args.no_lpips:
                        intra_lpips = -1.0
                     else:
+<<<<<<< HEAD
                         if args.total_eval_samples == 100:
                             intra_lpips = 0
                         else:
                             intra_lpips = evaluator.calc_intra_lpips()
+=======
+                       intra_lpips = 0 # evaluator.calc_intra_lpips()
+>>>>>>> ec63f51d7c1367ad83378af43915e66500ac3f36
 
                     stats["fid"] = float(fid_score)
                     stats["intra_lpips"] = float(intra_lpips)
