@@ -6,10 +6,10 @@ LOGDIR="0_myfiles_face/slurm"
 mkdir -p "$LOGDIR"
 
 # ---------------- configs to sweep ----------------
-DATASETS=(cat metfaces sunglasses)   # <— your dataset sweep
+DATASETS=(cat metfaces)   # <— your dataset sweep
 GEN_CLS_LOSS_WEIGHTS=(15e-3)
 CLS_LOSS_WEIGHTS=(5e-2)
-GEN_LRS=(2e-7)
+GEN_LRS=(5e-7)
 
 export WANDB_PROJECT="Babies_FINETUNE"
 export SAMPLER="karras"
@@ -17,12 +17,12 @@ export SAMPLER="karras"
 # Optional: per-dataset overrides (uncomment / edit if needed)
 # declare -A RES_BY_DS=( [babies]=256 [cat]=256 [metfaces]=256 [sunglasses]=256 )
 # declare -A LABELDIM_BY_DS=( [babies]=0 [cat]=0 [metfaces]=0 [sunglasses]=0 )
-declare -A CHECKPT_BY_DS=( 
-  [babies]="0_myfiles_face/checkpoint_path/babies_lr2e-7_bs1_dn3_DMD0_GClsw15e-3__naive_few_ftnaive_ddpmfew_dn3/checkpoint_model_047900"
-  [cat]="0_myfiles_face/checkpoint_path/cat_lr2e-7_bs1_dn3_DMD0_GClsw15e-3__dscat_ddfew_lr2e-7_clw5e-2_glw15e-3_ftnaive_ddpmfew_dn3/checkpoint_model_048000"  
-  [metfaces]="0_myfiles_face/checkpoint_path/metfaces_lr2e-7_bs1_dn3_DMD0_GClsw15e-3__dsmetfaces_ddfew_lr2e-7_clw5e-2_glw15e-3_ftnaive_ddpmfew_dn3/checkpoint_model_047900"
-  [sunglasses]="0_myfiles_face/checkpoint_path/sunglasses_lr2e-7_bs1_dn3_DMD0_GClsw15e-3__dssunglasses_ddfew_lr2e-7_clw5e-2_glw15e-3_ftnaive_ddpmfew_dn3/checkpoint_model_047900"
-)
+# declare -A CHECKPT_BY_DS=( 
+#   [babies]="0_myfiles_face/checkpoint_path/babies_lr2e-7_bs1_dn3_DMD0_GClsw15e-3__naive_few_ftnaive_ddpmfew_dn3/checkpoint_model_047900"
+#   [cat]="0_myfiles_face/checkpoint_path/cat_lr2e-7_bs1_dn3_DMD0_GClsw15e-3__dscat_ddfew_lr2e-7_clw5e-2_glw15e-3_ftnaive_ddpmfew_dn3/checkpoint_model_048000"  
+#   [metfaces]="0_myfiles_face/checkpoint_path/metfaces_lr2e-7_bs1_dn3_DMD0_GClsw15e-3__dsmetfaces_ddfew_lr2e-7_clw5e-2_glw15e-3_ftnaive_ddpmfew_dn3/checkpoint_model_047900"
+#   [sunglasses]="0_myfiles_face/checkpoint_path/sunglasses_lr2e-7_bs1_dn3_DMD0_GClsw15e-3__dssunglasses_ddfew_lr2e-7_clw5e-2_glw15e-3_ftnaive_ddpmfew_dn3/checkpoint_model_047900"
+# )
 
 # paired sweep, local runs
 for ds in "${DATASETS[@]}"; do
@@ -47,11 +47,6 @@ for ds in "${DATASETS[@]}"; do
 
         # If you keep a single checkpoint path for all, fine; else use CHECKPT_BY_DS["$ds"]
         # export CHECKPOINT_PATH="0_myfiles_face/checkpoint_path/FFHQ_distilled_weights/checkpoint_model_037200/"
-        export CHECKPOINT_PATH="${CHECKPT_BY_DS[$ds]}"
-
-        # Optional per-dataset overrides (uncomment if using the maps above)
-        # export RESOLUTION="${RES_BY_DS[$ds]:-256}"
-        # export LABEL_DIM="${LABELDIM_BY_DS[$ds]:-0}"
         # export CHECKPOINT_PATH="${CHECKPT_BY_DS[$ds]}"
 
         # Optim/compute knobs
@@ -68,9 +63,9 @@ for ds in "${DATASETS[@]}"; do
 
         # Tagging & GPUs
         export EXTRA_TAG="_${tag}"
-        export CUDA_VISIBLE_DEVICES=0,1
+        export CUDA_VISIBLE_DEVICES=0
         export TRAIN_GPUS=0
-        export TEST_GPUS=1
+        export TEST_GPUS=0
         export NPROC_PER_NODE=1
         export NNODES=1
 

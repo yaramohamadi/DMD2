@@ -7,7 +7,7 @@ mkdir -p "$LOGDIR"
 
 GEN_CLS_LOSS_WEIGHTS=(15e-3)
 CLS_LOSS_WEIGHTS=(5e-2)
-GEN_LRS=(2e-7 2e-6)
+GEN_LRS=(2e-7)
 
 export WANDB_PROJECT="Babies_FINETUNE"
 

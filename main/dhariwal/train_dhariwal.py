@@ -627,7 +627,9 @@ class Trainer:
         # ---------------------------
         # NEW: naive fine-tune branch
         # ---------------------------
+
         if getattr(self.args, "ft_mode", "pso") == "naive":
+
             self.model.train()
             generator_grad_norm = torch.tensor(0.0, device=self.accelerator.device)
 
