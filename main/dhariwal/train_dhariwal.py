@@ -582,7 +582,9 @@ class Trainer:
         # ---------------------------
         # NEW: naive fine-tune branch
         # ---------------------------
+
         if getattr(self.args, "ft_mode", "pso") == "naive":
+
             self.model.train()
             accelerator = self.accelerator
             accum = accelerator.gradient_accumulation_steps  # <-- we'll use this

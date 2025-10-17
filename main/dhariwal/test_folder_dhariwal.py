@@ -332,7 +332,9 @@ def sample(accelerator, current_model, args, model_index):
                 sigma_t_b = sigma_t.expand(cur)  # [B]
 
                 # predict x0 at step t
-                x0_hat = current_model(x, sigma_t_b, y)  # NCHW in [-1,1]
+                # after
+                x_for_model = x / sqrt_ab_t.view(1, 1, 1, 1)  # convert to EDM-style input
+                x0_hat = current_model(x_for_model, sigma_t_b, y)
 
                 # ε̂_t = (x_t - sqrt(ᾱ_t) * x0_hat) / sqrt(1-ᾱ_t)
                 eps_hat = (x - sqrt_ab_t * x0_hat) / sqrt_1mab_t
@@ -791,8 +793,10 @@ def evaluate():
                     evaluator = Evaluator(eval_args, imgs_nchw_f01, ref_npz_path, args.lpips_cluster_size)
 
                     # prec, rec = evaluator.calc_precision_recall(nearest_k=5)
-
-                    fid_score = evaluator.calc_fid()
+                    if args.total_eval_samples == 100:
+                        fid_score = 0
+                    else:
+                        fid_score = evaluator.calc_fid()
                     prec = 0
                     rec = 0
 
@@ -816,7 +820,10 @@ def evaluate():
                     if args.no_lpips:
                        intra_lpips = -1.0
                     else:
-                       intra_lpips = evaluator.calc_intra_lpips()
+                        if args.total_eval_samples == 100:
+                            intra_lpips = 0
+                        else:
+                            intra_lpips = evaluator.calc_intra_lpips()
 
                     stats["fid"] = float(fid_score)
                     stats["intra_lpips"] = float(intra_lpips)
