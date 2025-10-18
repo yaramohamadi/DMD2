@@ -78,7 +78,6 @@ test_stream_conditional() {
     ${USE_BF16:-}
 }
 
-
 TEST_PID=""
 TEST_PGID=""
 
@@ -134,5 +133,4 @@ TEST_PGID="$(ps -o pgid= "$TEST_PID" | tr -d ' ')" || true
 train
 # end of script — teardown() will run via the EXIT trap with train’s exit code
 
-
-
+test_stream_conditional

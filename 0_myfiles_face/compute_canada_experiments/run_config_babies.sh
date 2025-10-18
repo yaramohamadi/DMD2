@@ -61,9 +61,9 @@ export MASTER_PORT=$(shuf -i 20000-65000 -n 1)
 
 export GRAD_ACCUM_STEPS="${GRAD_ACCUM_STEPS:-4}"
 export BATCH_SIZE="${BATCH_SIZE:-1}"
-export EVAL_BATCH_SIZE=16
-export NUM_DENOISING_STEP="${NUM_DENOISING_STEP:-2}"
-export TRAIN_ITERS=60000
+export EVAL_BATCH_SIZE=8
+export NUM_DENOISING_STEP="${NUM_DENOISING_STEP:-3}"
+export TRAIN_ITERS=67000
 export DATASET_SIZE="${DATASET_SIZE:-10}"  # 10 5 1
 
 export PROJECT_PATH="0_myfiles_face"
@@ -124,7 +124,7 @@ export FEWSHOT_DATASET="$PROJECT_PATH/datasets/targets/${DATASET_SIZE}_${DATASET
 export TOTAL_EVAL_SAMPLES=5000
 export CONDITIONING_SIGMA=80.0
 export LPIPS_CLUSTER_SIZE=100
-export NO_LPIPS=""  # --no_lpips
+export NO_LPIPS=${NO_LPIPS:-}  # --no_lpips
 export USE_BF16="--use_bf16" # --use_bf16
 
 export GAN_HEAD_TYPE="global"
