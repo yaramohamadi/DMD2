@@ -127,11 +127,29 @@ class _X0AdapterWrapper(torch.nn.Module):
         sigma = torch.sqrt(torch.clamp(1.0 / alpha_bar - 1.0, min=0.0))
         return sigma.squeeze()
 
+
     def forward(self, x_t, t, y=None, **kwargs):
         if y is None and "y" in kwargs:
             y = kwargs["y"]
-        sigma = self._t_to_sigma(t, x_t.shape)
-        return self.net(x_t, sigma, y)
+
+        T = self.alphas_cumprod.numel()
+        # normalize t to integer indices in [0, T-1]
+        if t.dtype != torch.long:
+            if t.max() <= 1.0 + 1e-6:
+                t_idx = (t * (T - 1)).round().long()
+            else:
+                t_idx = t.round().long()
+        else:
+            t_idx = t
+
+        t_idx = torch.clamp(t_idx, 0, T - 1)
+
+        alpha_bar = self.alphas_cumprod.to(x_t.device)[t_idx].view(-1, *([1] * (x_t.ndim - 1)))
+        sigma = torch.sqrt(torch.clamp(1.0 / alpha_bar - 1.0, min=0.0))
+
+        x_for_model = x_t / torch.sqrt(alpha_bar)
+        return self.net(x_for_model, sigma.view(-1), y)
+
 
 
 

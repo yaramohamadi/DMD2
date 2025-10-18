@@ -6,7 +6,7 @@ LOGDIR="0_myfiles_face/slurm"
 mkdir -p "$LOGDIR"
 
 # ---------------- configs to sweep ----------------
-DATASETS=(cat metfaces)   # <— your dataset sweep
+DATASETS=(cat metfaces sunglasses babies)   # <— your dataset sweep
 GEN_CLS_LOSS_WEIGHTS=(15e-3)
 CLS_LOSS_WEIGHTS=(5e-2)
 GEN_LRS=(5e-7)
@@ -38,7 +38,7 @@ for ds in "${DATASETS[@]}"; do
         # ---------------- Finetune baseline settings ----------------
         export FT_MODE="naive"
         export DDPM_STEPS="$dd"                 # 'all' = 1000-step FT, 'few' = K-step FT
-        export TOTAL_EVAL_SAMPLES=5000
+        export TOTAL_EVAL_SAMPLES=1000
         export LOG_ITERS=100
         # ------------------------------------------------------------
 
@@ -63,9 +63,9 @@ for ds in "${DATASETS[@]}"; do
 
         # Tagging & GPUs
         export EXTRA_TAG="_${tag}"
-        export CUDA_VISIBLE_DEVICES=0
+        export CUDA_VISIBLE_DEVICES=0,1
         export TRAIN_GPUS=0
-        export TEST_GPUS=0
+        export TEST_GPUS=1
         export NPROC_PER_NODE=1
         export NNODES=1
 

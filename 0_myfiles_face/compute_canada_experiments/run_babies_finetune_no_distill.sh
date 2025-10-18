@@ -5,10 +5,10 @@ CHILD="0_myfiles_face/compute_canada_experiments/run_config_babies.sh"
 LOGDIR="0_myfiles_face/slurm"
 mkdir -p "$LOGDIR"
 
-DATASETS=(metfaces cat)
+DATASETS=(metfaces cat sunglasses babies)
 GEN_CLS_LOSS_WEIGHTS=(15e-3)
 CLS_LOSS_WEIGHTS=(5e-2)
-GEN_LRS=(2e-6)
+GEN_LRS=(5e-7)
 
 export DDPM_STEPS=all
 export SAMPLER="ddim"
@@ -38,9 +38,9 @@ for ds in "${DATASETS[@]}"; do
         export BATCH_SIZE=1
         if [[ "$dd" == "few" ]]; then export NUM_DENOISING_STEP=3; fi
         export EXTRA_TAG="_naive_${dd}"
-        export CUDA_VISIBLE_DEVICES=2
+        export CUDA_VISIBLE_DEVICES=2,3
         export TRAIN_GPUS=2
-        export TEST_GPUS=2
+        export TEST_GPUS=3
         export NPROC_PER_NODE=1
         export NNODES=1
 

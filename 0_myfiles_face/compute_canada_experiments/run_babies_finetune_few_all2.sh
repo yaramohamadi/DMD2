@@ -9,7 +9,7 @@ mkdir -p "$LOGDIR"
 DATASETS=(sunglasses babies)   # <— your dataset sweep
 GEN_CLS_LOSS_WEIGHTS=(15e-3)
 CLS_LOSS_WEIGHTS=(5e-2)
-GEN_LRS=(5e-7)
+GEN_LRS=(1e-7)
 
 export WANDB_PROJECT="Babies_FINETUNE"
 export SAMPLER="karras"
@@ -38,7 +38,7 @@ for ds in "${DATASETS[@]}"; do
         # ---------------- Finetune baseline settings ----------------
         export FT_MODE="naive"
         export DDPM_STEPS="$dd"                 # 'all' = 1000-step FT, 'few' = K-step FT
-        export TOTAL_EVAL_SAMPLES=5000
+        export TOTAL_EVAL_SAMPLES=1000
         export LOG_ITERS=100
         # ------------------------------------------------------------
 

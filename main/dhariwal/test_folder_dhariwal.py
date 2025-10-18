@@ -650,7 +650,7 @@ def evaluate():
             g = max(1, g)
             grid = all_images_tensor[:g*g].numpy().reshape(g, g, args.resolution, args.resolution, 3)
             grid = np.swapaxes(grid, 1, 2).reshape(g*args.resolution, g*args.resolution, 3)
-            grid_path = f"grid_{model_index:06d}.png"
+            grid_path = os.path.join(folder, f"grid_{model_index:06d}.png")
             Image.fromarray(np.ascontiguousarray(grid)).save(grid_path)
 
             imgs_nchw_f01 = all_images_tensor.permute(0, 3, 1, 2).to(torch.float32) / 255.0
@@ -769,9 +769,9 @@ def evaluate():
 
                 # save grid locally too
                 grid_path = f"grid_{model_index:06d}.png"
-
-                # ensure C-contiguous uint8 for PIL
+                grid_path = os.path.join(folder, f"grid_{model_index:06d}.png")
                 Image.fromarray(np.ascontiguousarray(grid)).save(grid_path)
+
                 # ------------------------------------------------------------------
 
                 imgs_nchw_f01 = all_images_tensor.permute(0, 3, 1, 2).to(torch.float32) / 255.0
