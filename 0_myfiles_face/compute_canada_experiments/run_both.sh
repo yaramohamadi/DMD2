@@ -167,13 +167,15 @@ trap teardown EXIT INT TERM ERR
 
 # Start test in its own process group so children share the PGID
 
-export -f test_stream_conditional
-( setsid bash -c 'test_stream_conditional' ) &
-TEST_PID=$!
-TEST_PGID="$(ps -o pgid= "$TEST_PID" | tr -d ' ')" || true
+# export -f test_stream_conditional
+# ( setsid bash -c 'test_stream_conditional' ) &
+# TEST_PID=$!
+# TEST_PGID="$(ps -o pgid= "$TEST_PID" | tr -d ' ')" || true
+
+test_stream_conditional
 
 # Run training in foreground; on exit (success or error), EXIT trap runs teardown()
-train
+# train
 # end of script — teardown() will run via the EXIT trap with train’s exit code
 
 

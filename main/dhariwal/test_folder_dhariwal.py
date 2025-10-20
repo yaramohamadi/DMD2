@@ -667,15 +667,15 @@ def evaluate():
 
             stats = {}
             if accelerator.is_main_process:
-                # evaluator = Evaluator(eval_args, imgs_nchw_f01, ref_npz_path, args.lpips_cluster_size)
-                #fid_score = evaluator.calc_fid()
-                #prec, rec = evaluator.calc_precision_recall(nearest_k=5)
-                #intra_lpips = -1.0 if args.no_lpips else evaluator.calc_intra_lpips()
+                evaluator = Evaluator(eval_args, imgs_nchw_f01, ref_npz_path, args.lpips_cluster_size)
+                fid_score = evaluator.calc_fid()
+                prec, rec = evaluator.calc_precision_recall(nearest_k=5)
+                intra_lpips = evaluator.calc_intra_lpips()
 
-                stats["fid"] = 0# float(fid_score)
-                stats["intra_lpips"] = 0 #float(intra_lpips)
-                stats["precision"] = 0# float(prec)
-                stats["recall"] = 0# float(rec)
+                stats["fid"] = float(fid_score)
+                stats["intra_lpips"] = float(intra_lpips)
+                stats["precision"] = float(prec)
+                stats["recall"] = float(rec)
 
                 print(f"[eval_best_once] {target_dir} FID {fid_score:.4f} Intra-LPIPS {intra_lpips:.4f}"
                         f"Precision {prec:.4f} Recall {rec:.4f}") 

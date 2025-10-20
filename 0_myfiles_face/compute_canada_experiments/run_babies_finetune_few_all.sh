@@ -38,7 +38,7 @@ for ds in "${DATASETS[@]}"; do
         # ---------------- Finetune baseline settings ----------------
         export FT_MODE="naive"
         export DDPM_STEPS="$dd"                 # 'all' = 1000-step FT, 'few' = K-step FT
-        export TOTAL_EVAL_SAMPLES=1000
+        export TOTAL_EVAL_SAMPLES=5000
         export LOG_ITERS=100
         # ------------------------------------------------------------
 
