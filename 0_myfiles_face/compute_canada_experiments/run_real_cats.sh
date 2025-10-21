@@ -1,0 +1,42 @@
+#!/bin/bash
+
+CHILD="0_myfiles_face/compute_canada_experiments/run_config_babies.sh"       # <-- point to the sbatch file above
+LOGDIR="0_myfiles_face/slurm"
+mkdir -p "$LOGDIR"
+
+
+GEN_CLS_LOSS_WEIGHT=(15e-3)
+CLS_LOSS_WEIGHT=(5e-2)
+GEN_LR=(5e-8)
+
+export TRAIN_FAKE_ON_REAL="--train_fake_on_real" 
+
+export WANDB_PROJECT="REAL_ONLINE_TEACHER"
+
+# paired sweep, local runs\
+for lr in "${GEN_LR[@]}"; do
+  for i in "${!GEN_CLS_LOSS_WEIGHT[@]}"; do
+    glw="${GEN_CLS_LOSS_WEIGHT[$i]}"
+    clw="${CLS_LOSS_WEIGHT[$i]}"
+    tag="real${TRAIN_FAKE_ON_REAL}_lr${lr}_clw${clw}_glw${glw}"
+
+    echo "[LOCAL] lr=$lr  GEN_CLS_LOSS_WEIGHT=$glw  CLS_LOSS_WEIGHT=$clw  tag=$tag"
+
+    export DATASET_NAME="metfaces"
+    export GEN_LR="$lr" 
+    export GEN_CLS_LOSS_WEIGHT="$glw" 
+    export CLS_LOSS_WEIGHT="$clw" 
+    export GEN_LR="${GEN_LR[0]}" 
+    export GRAD_ACCUM_STEPS=4
+    export BATCH_SIZE=1
+    export NUM_DENOISING_STEP=3 
+    export CUDA_VISIBLE_DEVICES=0,1 
+    export TRAIN_GPUS=0,1
+    export TEST_GPUS=0,1
+    export NPROC_PER_NODE=2 
+    export NNODES=1 
+    export EXTRA_TAG="_${tag}" 
+    bash "$CHILD"
+
+  done
+done

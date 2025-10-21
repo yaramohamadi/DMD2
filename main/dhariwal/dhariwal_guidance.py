@@ -92,6 +92,14 @@ class dhariwalGuidance(nn.Module):
         self.ls_gen       = float(getattr(args, 'ls_target_gen', 1.0))
         self.r1_gamma     = float(getattr(args, 'r1_gamma', 0.0))
 
+        self.train_fake_on_real = getattr(args, 'train_fake_on_real', False)
+
+        if self.train_fake_on_real:
+            print("Fake-score training: REAL images")
+        else:
+            print("Fake-score training: GENERATOR outputs")
+                
+
         # with dnnlib.util.open_url(args.model_id) as f:
         #    temp_edm = pickle.load(f)['ema']
 
@@ -542,9 +550,17 @@ class dhariwalGuidance(nn.Module):
         labels,
         real_train_dict=None
     ):
-        fake_dict, fake_log_dict = self.compute_loss_fake(
-            image, labels
-        )
+
+
+        if self.train_fake_on_real:
+            fake_dict, fake_log_dict = self.compute_loss_fake(
+                real_train_dict['real_image'],
+                real_train_dict['real_label']
+            )
+        else:
+            fake_dict, fake_log_dict = self.compute_loss_fake(
+                image, labels
+            )
 
         loss_dict = fake_dict 
         log_dict = fake_log_dict

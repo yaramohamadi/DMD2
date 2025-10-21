@@ -819,7 +819,8 @@ def parse_args():
         help="Final (smallest) sigma for the unroll")
     parser.add_argument("--use_bf16", action="store_true")
     parser.add_argument("--label_dropout_p", type=float, default=0.30, 
-    help="Probability to drop labels for the entire micro-batch (CFG-style).")
+        help="Probability to drop labels for the entire micro-batch (CFG-style).")
+    parser.add_argument("--train_fake_on_real", action="store_true")
     # -----------------------------------------------------------
 
     args = parser.parse_args()
