@@ -1,0 +1,16 @@
+{
+  "created": "2025-10-21T14:28:52.304552Z",
+  "seed": 10,
+  "shape": [
+    100,
+    3,
+    256,
+    256
+  ],
+  "dtype": "float32",
+  "sampler": "ddim",
+  "eta": 0.0,
+  "steps": 3,
+  "schedule": "linear",
+  "notes": "Reuse these z_T tensors for apples-to-apples comparisons across runs."
+}

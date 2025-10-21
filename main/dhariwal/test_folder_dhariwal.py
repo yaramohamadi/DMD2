@@ -27,6 +27,13 @@ from main.dhariwal.dhariwal_network import get_edm_network  # this builds Dhariw
 from argparse import Namespace
 from main.dhariwal.evaluation_util import Evaluator
 from typing import Optional
+from PIL import Image, ImageDraw
+
+from accelerate.utils import set_seed
+
+set_seed(10)
+torch.backends.cudnn.benchmark = False
+torch.use_deterministic_algorithms(False)  # DDIM is deterministic already; keep False if you use TF32
 
 torch.set_num_threads(int(os.getenv("OMP_NUM_THREADS", "1")))
 
@@ -249,7 +256,8 @@ def _re_noise(x0: torch.Tensor, sigma_next: torch.Tensor) -> torch.Tensor:
 
 
 @torch.no_grad()
-def sample(accelerator, current_model, args, model_index):
+def sample(accelerator, current_model, args, model_index, zbank=None):
+
     """
     Generate exactly args.total_eval_samples images across all processes,
     with a global tqdm progress bar (on rank 0). Returns NHWC uint8 tensor on CPU.
@@ -318,8 +326,16 @@ def sample(accelerator, current_model, args, model_index):
         # =========================
         if getattr(args, "sampler", None) == "ddim":
             # ----- DDIM (η=0): 25 steps on the native DDPM grid -----
+            
             # start from standard normal (x_{T-1})
-            x = torch.randn(cur, 3, args.resolution, args.resolution, device=dev)
+            if zbank is None:
+                x = torch.randn(cur, 3, args.resolution, args.resolution, device=dev)
+            else:
+                # slice correct chunk for this step and rank
+                start = _ * bs * world + accelerator.process_index * bs
+                end   = start + cur
+                x = zbank[start:end].to(dev).clone()
+
             y = make_labels(cur, step_offset=_)
 
             for i, t in enumerate(t_seq):
@@ -356,13 +372,24 @@ def sample(accelerator, current_model, args, model_index):
         elif (not args.denoising) or (args.num_denoising_step <= 1):
             # ----- one-step path (existing) -----
             t = torch.full((cur,), args.conditioning_sigma, device=dev)
-            noise = torch.randn(cur, 3, args.resolution, args.resolution, device=dev)
+            if zbank is None:
+                noise = torch.randn(cur, 3, args.resolution, args.resolution, device=dev)
+            else:
+                start = _ * bs * world + accelerator.process_index * bs
+                end   = start + cur
+                noise = zbank[start:end].to(dev).clone()
             imgs = current_model(noise * args.conditioning_sigma, t, make_labels(cur, step_offset=_))
+
         else:
             # ----- your K-step unrolled (stochastic) path -----
             K = int(max(1, args.num_denoising_step))
             sigma0 = torch.full((cur,), args.conditioning_sigma, device=dev)
-            x = torch.randn(cur, 3, args.resolution, args.resolution, device=dev) * sigma0.view(-1,1,1,1)
+            if zbank is None:
+                x = torch.randn(cur, 3, args.resolution, args.resolution, device=dev) * sigma0.view(-1,1,1,1)
+            else:
+                start = _ * bs * world + accelerator.process_index * bs
+                end   = start + cur
+                x = zbank[start:end].to(dev).clone() * sigma0.view(-1,1,1,1)
             y = make_labels(cur, step_offset=_)
             sigmas = _make_sigma_schedule(sigma0, K, args.denoising_sigma_end)
             last_x0 = None
@@ -390,11 +417,26 @@ def sample(accelerator, current_model, args, model_index):
         pbar.close()
         all_images_tensor = torch.cat(rank0_chunks, dim=0)[:total]  # [N,H,W,3] uint8, CPU
 
-        n = all_images_tensor.size(0)
-        g = int(np.floor(np.sqrt(min(100, n))))
-        g = max(1, g)
-        grid = all_images_tensor[:g*g].numpy().reshape(g, g, args.resolution, args.resolution, 3)
-        grid = np.swapaxes(grid, 1, 2).reshape(g*args.resolution, g*args.resolution, 3)
+        if accelerator.is_main_process and getattr(args, "zbank_only", False):
+            outdir = Path(args.folder)  # or Path(args.zbank_outdir) if you added that flag
+            outdir.mkdir(parents=True, exist_ok=True)
+
+            # (1) save each image (NHWC uint8)
+            N = all_images_tensor.size(0)
+            for i in range(N):
+                img = Image.fromarray(all_images_tensor[i].numpy(), mode="RGB")
+                img.save(str(outdir / f"zbank_{i:03d}.png"))
+
+            # (2) save a 10x10 grid (or largest square <= N if N<100)
+            want = 100
+            ngrid = min(want, N)
+            g = 10 if ngrid >= 100 else int(np.floor(np.sqrt(ngrid)))
+            g = max(1, g)
+            block = all_images_tensor[: g*g].numpy().reshape(g, g, args.resolution, args.resolution, 3)
+            grid  = np.swapaxes(block, 1, 2).reshape(g*args.resolution, g*args.resolution, 3)
+            Image.fromarray(np.ascontiguousarray(grid)).save(str(outdir / "zbank_grid_10x10.png"))
+
+            print(f"[zbank_only] Saved {N} images and a {g}x{g} grid to {outdir}.")
 
         wandb.log({
             "generated_image_grid": wandb.Image(grid),
@@ -478,10 +520,6 @@ def render_per_class_grid(accelerator, current_model, args, model_index, n_per_c
     if not accelerator.is_main_process:
         return None
 
-    # Assemble big grid
-    import numpy as np
-    from PIL import Image, ImageDraw
-
     rows_np = [r.numpy()[:n_per_class] for r in rows]  # trim per rank
     K_rows  = len(rows_np)
     canvas  = np.zeros((K_rows*H, n_per_class*W, 3), dtype=np.uint8)
@@ -543,12 +581,79 @@ def evaluate():
                     help="oneshot: single step; karras: your K-step loop; ddim: 25-step DDIM")
     parser.add_argument("--ddim_steps", type=int, default=25,
                         help="Number of DDIM steps (e.g., 25)")
-        
+    parser.add_argument("--zbank", type=str, default="",
+    help="Path to a z-bank .pt file with {'zT': Tensor[N,3,H,W]}.")
+    parser.add_argument("--zbank_count", type=int, default=100,
+        help="How many z's to consume from the bank.")
+    parser.add_argument("--zbank_only", action="store_true",
+        help="If set, generate from z-bank, save, and exit (skip metrics).")
 
 
     args = parser.parse_args()
     if args.label_mode is None:
         args.label_mode = "uncond" if args.label_dim == 0 else "uniform"
+
+    zbank = None
+    if args.zbank:
+        pkg = torch.load(args.zbank, map_location="cpu")
+        if "zT" not in pkg:
+            raise ValueError("zbank file must contain key 'zT'")
+        zbank = pkg["zT"].float()  # [N,3,H,W]
+        if zbank.ndim != 4 or zbank.size(1) != 3:
+            raise ValueError(f"Bad zbank shape: {tuple(zbank.shape)}; expected [N,3,H,W]")
+        if zbank.size(2) != args.resolution or zbank.size(3) != args.resolution:
+            print(f"[warn] zbank resolution {tuple(zbank.shape[2:])} != args.resolution={args.resolution}")
+        # Use exactly zbank_count (capped by available)
+        args.total_eval_samples = min(int(args.zbank_count), int(zbank.size(0)))
+
+
+    # --- QUICK OVERRIDE: force a specific checkpoint and skip everything else ---
+    from pathlib import Path
+    FORCE_CKPT = "0_myfiles_face/checkpoint_path/FFHQ_distilled_weights/checkpoint_model_037200"
+    ckpt_path = Path(FORCE_CKPT)
+    if not ckpt_path.exists():
+        raise FileNotFoundError(f"Forced checkpoint not found: {ckpt_path}")
+
+    # Build model
+    generator = create_generator(
+        str(ckpt_path / "pytorch_model.bin"),
+        args, base_model=None
+    ).to("cuda" if torch.cuda.is_available() else "cpu")
+
+    # Optional: pick a display index from the name
+    try:
+        model_index = int(ckpt_path.name.split("_")[-1])
+    except Exception:
+        model_index = -1
+
+    # Accelerator init (minimal)
+    accelerator_project_config = ProjectConfiguration(logging_dir=str(ckpt_path.parent))
+    accelerator = Accelerator(
+        gradient_accumulation_steps=1,
+        mixed_precision="bf16" if args.use_bf16 else "no",
+        log_with="wandb",
+        project_config=accelerator_project_config
+    )
+
+    # If you’re using a z-bank, load it here (optional):
+    zbank = None
+    if getattr(args, "zbank", ""):
+        pkg = torch.load(args.zbank, map_location="cpu")
+        zbank = pkg["zT"].float()
+        args.total_eval_samples = min(int(getattr(args, "zbank_count", 100)), int(zbank.size(0)))
+
+    # Sample once and exit (honors --zbank_only saving, grid, etc.)
+    _ = sample(accelerator, generator, args, model_index, zbank=zbank)
+    return
+    # --- END QUICK OVERRIDE ---
+
+
+
+
+
+
+
+
 
     folder = args.folder
     overall_stats = {}
@@ -564,7 +669,7 @@ def evaluate():
     print(accelerator.state)
 
     # resume
-    info_path = os.path.join(folder, "stats.json")
+    info_path = os.path.join(args.folder, "stats.json")
     evaluated_checkpoints = set()            # <- NEW: always define it
     overall_stats = {}                       # keep this too (you already have it above)
 
@@ -587,7 +692,7 @@ def evaluate():
     model_index = -1
     # --- One-shot best-checkpoint evaluation and exit -----------------
     if args.eval_best_once:
-        target_dir = locate_best_checkpoint_dir(folder, overall_stats)
+        target_dir = locate_best_checkpoint_dir(args.folder, overall_stats)
         if target_dir is None:
             if accelerator.is_main_process:
                 print("[eval_best_once] No best checkpoint found (checkpoint_best/, best_ckpt.json, or stats.json). Exiting.")
@@ -628,7 +733,13 @@ def evaluate():
                     "panel/per_class": wandb.Image(panel),
             })
 
-            all_images_tensor = sample(accelerator, generator, args, model_index)
+            all_images_tensor = sample(accelerator, generator, args, model_index, zbank=zbank)
+
+            if args.zbank_only:
+                if accelerator.is_main_process:
+                    print(f"[zbank_only] Saved {all_images_tensor.size(0)} images to {args.folder}. Exiting.")
+                return
+
 
             # TMP TODO: save numpy for inspection
             # tmp_npy = os.path.join(folder, f"_tmp_imgs_{model_index:06d}.npy")
@@ -650,7 +761,7 @@ def evaluate():
             g = max(1, g)
             grid = all_images_tensor[:g*g].numpy().reshape(g, g, args.resolution, args.resolution, 3)
             grid = np.swapaxes(grid, 1, 2).reshape(g*args.resolution, g*args.resolution, 3)
-            grid_path = os.path.join(folder, f"grid_{model_index:06d}.png")
+            grid_path = os.path.join(args.folder, f"grid_{model_index:06d}.png")
             Image.fromarray(np.ascontiguousarray(grid)).save(grid_path)
 
             imgs_nchw_f01 = all_images_tensor.permute(0, 3, 1, 2).to(torch.float32) / 255.0
@@ -682,7 +793,7 @@ def evaluate():
 
                 # persist/update stats.json under the same key used in the streaming path
                 overall_stats[target_dir] = stats
-                with open(os.path.join(folder, "stats.json"), "w") as f:
+                with open(os.path.join(args.folder, "stats.json"), "w") as f:
                     json.dump(overall_stats, f, indent=2)
 
             if accelerator.is_main_process:
@@ -701,7 +812,7 @@ def evaluate():
 
     while True:
         # only directories named 'checkpoint_*'
-        new_ckpts = sorted(p for p in Path(folder).glob("checkpoint_model_*") if p.is_dir())
+        new_ckpts = sorted(p for p in Path(args.folder).glob("checkpoint_model_*") if p.is_dir())
         new_ckpts = [str(p) for p in new_ckpts if str(p) not in evaluated_checkpoints]
         if not new_ckpts:
             time.sleep(3.0)
@@ -745,7 +856,12 @@ def evaluate():
                         "panel/per_class": wandb.Image(panel),
                     })
                     
-                all_images_tensor = sample(accelerator, generator, args, model_index)
+                all_images_tensor = sample(accelerator, generator, args, model_index, zbank=zbank)
+
+                if args.zbank_only:
+                    if accelerator.is_main_process:
+                        print(f"[zbank_only] Saved {all_images_tensor.size(0)} images to {folder}. Exiting.")
+                    return
 
                 #TMP TODO: save numpy for inspection
                 # tmp_npy = os.path.join(folder, f"_tmp_imgs_{model_index:06d}.npy")
@@ -769,7 +885,7 @@ def evaluate():
 
                 # save grid locally too
                 grid_path = f"grid_{model_index:06d}.png"
-                grid_path = os.path.join(folder, f"grid_{model_index:06d}.png")
+                grid_path = os.path.join(args.folder, f"grid_{model_index:06d}.png")
                 Image.fromarray(np.ascontiguousarray(grid)).save(grid_path)
 
                 # ------------------------------------------------------------------
@@ -803,11 +919,11 @@ def evaluate():
 
                     # Save best model if needed
                     if accelerator.is_main_process:
-                        with best_lock(Path(folder)):
-                            best = read_best_meta(Path(folder))
+                        with best_lock(Path(args.folder)):
+                            best = read_best_meta(Path(args.folder))
                             current_fid = float(fid_score)
                             if np.isfinite(current_fid) and (current_fid < float(best.get("fid", float("inf")))):
-                                dst_path = copy_checkpoint_as_best(ckpt_path, Path(folder), model_index, current_fid)
+                                dst_path = copy_checkpoint_as_best(ckpt_path, Path(args.folder), model_index, current_fid)
                                 new_best = {
                                     "fid": current_fid,
                                     "iteration": int(model_index),
@@ -815,7 +931,7 @@ def evaluate():
                                     "dst": str(dst_path),
                                     "timestamp": time.time(),
                                 }
-                                write_best_meta(Path(folder), new_best)
+                                write_best_meta(Path(args.folder), new_best)
                                 print(f"[BEST] New best FID {current_fid:.4f} at iter {model_index}. Saved to: {dst_path}")
 
                     if args.no_lpips:
@@ -842,7 +958,7 @@ def evaluate():
                 release_eval_lock(ckpt_path)
 
         if accelerator.is_main_process:
-            with open(os.path.join(folder, "stats.json"), "w") as f:
+            with open(os.path.join(args.folder, "stats.json"), "w") as f:
                 json.dump(overall_stats, f, indent=2)
 
 

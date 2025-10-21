@@ -81,7 +81,7 @@ export MASTER_PORT=$(shuf -i 20000-65000 -n 1)
 
 export GRAD_ACCUM_STEPS="${GRAD_ACCUM_STEPS:-4}"
 export BATCH_SIZE="${BATCH_SIZE:-1}"
-export EVAL_BATCH_SIZE=8
+export EVAL_BATCH_SIZE=10
 export NUM_DENOISING_STEP="${NUM_DENOISING_STEP:-3}"
 export TRAIN_ITERS="${TRAIN_ITERS:-80000}"
 export DATASET_SIZE="${DATASET_SIZE:-10}"  # 10 5 1
@@ -99,6 +99,9 @@ export WANDB_API_KEY=37efdaf78afc776eece6c9207e21caaff0ede2c3
 export SEED=10
 export RESOLUTION=256
 
+export EVAL_BEST_ONCE="${EVAL_BEST_ONCE:-}" # --eval_best_once
+export Z_BANK_ONLY="${Z_BANK_ONLY:-}" # --z_bank_only
+export SAVE_INIT_CKPT="${SAVE_INIT_CKPT:-}" # "--save_init_ckpt"
 
 # For label handling ------------------------------------------------------
 # ---- intent switches (set these per run) ----

@@ -5,17 +5,18 @@ CHILD="0_myfiles_face/compute_canada_experiments/run_config_babies.sh"
 LOGDIR="0_myfiles_face/slurm"
 mkdir -p "$LOGDIR"
 
-DATASETS=(metfaces cat sunglasses babies)
-GEN_CLS_LOSS_WEIGHTS=(15e-3)
-CLS_LOSS_WEIGHTS=(5e-2)
-GEN_LRS=(5e-7)
+DATASETS=(babies)
+GEN_CLS_LOSS_WEIGHTS=(1)
+CLS_LOSS_WEIGHTS=(1)
+GEN_LRS=(1)
 
 export EVAL_BEST_ONCE="--eval_best_once"
 export Z_BANK_ONLY="--zbank_only"
+export SAVE_INIT_CKPT="--save_init_ckpt"
 
 export DDPM_STEPS=all
 export SAMPLER="ddim"
-export WANDB_PROJECT="Babies_FINETUNE_no_distill"
+export WANDB_PROJECT="FFHQ_gridsave_zvector"
 
 for ds in "${DATASETS[@]}"; do
   for dd in all; do
@@ -24,7 +25,7 @@ for ds in "${DATASETS[@]}"; do
         glw="${GEN_CLS_LOSS_WEIGHTS[$i]}"
         clw="${CLS_LOSS_WEIGHTS[$i]}"
 
-        tag="ds${ds}_lr${lr}_clw${clw}_glw${glw}"
+        tag="FFHQ_stuff_ds${ds}_lr${lr}_clw${clw}_glw${glw}"
         echo "[LOCAL] dataset=$ds  lr=$lr  GEN_CLS_LOSS_WEIGHT=$glw  CLS_LOSS_WEIGHT=$clw  tag=$tag"
 
         # Finetune baseline settings -------
@@ -32,6 +33,7 @@ for ds in "${DATASETS[@]}"; do
         export DDPM_STEPS="$dd"
         export TOTAL_EVAL_SAMPLES=5000
         export LOG_ITERS=100
+        
         # ----------------------------------
         export DATASET_NAME="$ds"
         export GEN_LR="$lr"

@@ -6,13 +6,16 @@ LOGDIR="0_myfiles_face/slurm"
 mkdir -p "$LOGDIR"
 
 # ---------------- configs to sweep ----------------
-DATASETS=(cat metfaces sunglasses babies)   # <— your dataset sweep
+DATASETS=(cat)   # <— your dataset sweep # metfaces sunglasses babies
 GEN_CLS_LOSS_WEIGHTS=(15e-3)
 CLS_LOSS_WEIGHTS=(5e-2)
 GEN_LRS=(5e-7)
 
 export WANDB_PROJECT="Babies_FINETUNE"
 export SAMPLER="karras"
+
+export EVAL_BEST_ONCE="--eval_best_once"
+export Z_BANK_ONLY="--zbank_only"
 
 # Optional: per-dataset overrides (uncomment / edit if needed)
 # declare -A RES_BY_DS=( [babies]=256 [cat]=256 [metfaces]=256 [sunglasses]=256 )

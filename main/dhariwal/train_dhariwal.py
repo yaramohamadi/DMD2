@@ -772,8 +772,17 @@ class Trainer:
     
 
     def train(self):
+        
         accum = self.accelerator.gradient_accumulation_steps
-
+        # --- NEW: save initial checkpoint at global_step=0 ---
+        if getattr(self.args, "save_init_ckpt", False):
+            # ensure consistent step index for filename
+            self.global_step = 0
+            if self.accelerator.is_main_process and (not self.no_save):
+                self.save()  # creates .../checkpoint_model_000000 with .READY
+            self.accelerator.wait_for_everyone()
+        # ------------------------------------------------------
+        
         for _ in range(self.global_step, self.train_iters):
 
             self.train_one_step()
@@ -1065,6 +1074,8 @@ def parse_args():
                     help="Use 'naive' for plain diffusion fine-tuning baseline.")
     parser.add_argument("--ddpm_steps", choices=["all", "few"], default="all",
                         help="'all' = 1000-step grid; 'few' = sample from K sigmas")
+    parser.add_argument("--save_init_ckpt", action="store_true",
+                        help="If set, save checkpoint_model_000000 before training steps begin.")
     # -----------------------------------------------------------
 
     args = parser.parse_args()

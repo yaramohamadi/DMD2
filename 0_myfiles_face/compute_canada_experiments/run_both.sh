@@ -56,7 +56,8 @@ train() {
       --grad_accum_steps "$GRAD_ACCUM_STEPS" \
       --ft_mode "$FT_MODE" \
       --ddpm_steps "$DDPM_STEPS" \
-      "${DEN_ARGS[@]}"
+      "${DEN_ARGS[@]}" \
+      $SAVE_INIT_CKPT
 }
 
 #       --checkpoint_path "$CHECKPOINT_PATH" \
@@ -89,7 +90,10 @@ test_stream_conditional() {
     $NO_LPIPS \
     $USE_BF16 \
     --sampler $SAMPLER \
-    --ddim_steps 25
+    --ddim_steps 25 \
+    $EVAL_BEST_ONCE \
+    $Z_BANK_ONLY \
+    --zbank 0_myfiles_face/z_bank/zbank_256.pt
 }
 
 # -----------------------
