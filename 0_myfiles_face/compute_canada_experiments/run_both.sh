@@ -48,7 +48,8 @@ train() {
       --gan_adv_loss "${GAN_ADV_LOSS:-}" \
       ${USE_BF16:-} \
       --grad_accum_steps "${GRAD_ACCUM_STEPS:-1}" \
-      ${REVERSE_DMD:-}
+      ${REVERSE_DMD:-} \
+      ${TRAIN_FAKE_ON_REAL:-}
 }
 
 # -----------------------
