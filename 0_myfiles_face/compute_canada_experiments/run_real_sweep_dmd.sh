@@ -4,18 +4,18 @@ CHILD="0_myfiles_face/compute_canada_experiments/run_config_babies.sh"  # <-- sb
 LOGDIR="0_myfiles_face/slurm"
 mkdir -p "$LOGDIR"
 
-GEN_CLS_LOSS_WEIGHTS=(1e-1)
-CLS_LOSS_WEIGHTS=(1e-1)
-GEN_LRS=(1e-5)
+GEN_CLS_LOSS_WEIGHTS=(5e-4)
+CLS_LOSS_WEIGHTS=(2e-3)
+GEN_LRS=(2e-6)
 
-export DMD_LOSS_WEIGHT=0
+export DMD_LOSS_WEIGHT=1
 
 export TRAIN_FAKE_ON_REAL="--train_fake_on_real"
 export WANDB_PROJECT="REAL_ONLINE_TEACHER"
 
 export GAN_MULTIHEAD=""
 
-DATASETS=("metfaces" "cat")
+DATASETS=("metfaces") #  "cat"
 
 # paired sweep, local runs
 for ds in "${DATASETS[@]}"; do
@@ -23,7 +23,7 @@ for ds in "${DATASETS[@]}"; do
     for i in "${!GEN_CLS_LOSS_WEIGHTS[@]}"; do
       glw="${GEN_CLS_LOSS_WEIGHTS[$i]}"
       clw="${CLS_LOSS_WEIGHTS[$i]}"
-      tag="GAN_MULTIHEAD_${ds}_DMD${DMD_LOSS_WEIGHT}_lr${lr}_clw${clw}_glw${glw}"
+      tag="WITH_DMD_TO_SOURCE"
 
       echo "[LOCAL] dataset=$ds  lr=$lr  GEN_CLS_LOSS_WEIGHT=$glw  CLS_LOSS_WEIGHT=$clw  tag=$tag"
 
@@ -35,7 +35,7 @@ for ds in "${DATASETS[@]}"; do
       export BATCH_SIZE=1
       export NUM_DENOISING_STEP=3
       export CUDA_VISIBLE_DEVICES=0,1
-      export TRAIN_GPUS=1
+      export TRAIN_GPUS=0
       export TEST_GPUS=1
       export NPROC_PER_NODE=1
       export NNODES=1

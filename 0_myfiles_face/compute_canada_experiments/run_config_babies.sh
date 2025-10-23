@@ -63,7 +63,7 @@ export GRAD_ACCUM_STEPS="${GRAD_ACCUM_STEPS:-4}"
 export BATCH_SIZE="${BATCH_SIZE:-1}"
 export EVAL_BATCH_SIZE=10
 export NUM_DENOISING_STEP="${NUM_DENOISING_STEP:-3}"
-export TRAIN_ITERS=40000
+export TRAIN_ITERS=10000
 export DATASET_SIZE="${DATASET_SIZE:-10}"  # 10 5 1
 
 export PROJECT_PATH="0_myfiles_face"
@@ -130,7 +130,9 @@ export USE_BF16="--use_bf16" # --use_bf16
 export GAN_HEAD_TYPE="global"
 export GAN_HEAD_LAYERS="${GAN_HEAD_LAYERS:-"all"}"
 export GAN_ADV_LOSS="${GAN_ADV_LOSS:-bce}"
-export GAN_MULTIHEAD="--gan_multihead"
+export GAN_MULTIHEAD="${GAN_MULTIHEAD:-"--gan_multihead"}" # "--gan_multihead"
+
+export REVERSE_DMD="${REVERSE_DMD:-}"
 
 export ACCELERATE_LOG_LEVEL=error
 export TRANSFORMERS_VERBOSITY=error

@@ -126,6 +126,8 @@ class dhariwalGuidance(nn.Module):
         self.sigma_min = args.sigma_min
         self.rho = args.rho
 
+        self.reverse_dmd = args.reverse_dmd
+
         self.gan_classifier = args.gan_classifier
         self.diffusion_gan = args.diffusion_gan 
         self.diffusion_gan_max_timestep = args.diffusion_gan_max_timestep
@@ -252,9 +254,14 @@ class dhariwalGuidance(nn.Module):
             p_fake = (latents - pred_fake_image) 
 
             weight_factor = torch.abs(p_real).mean(dim=[1, 2, 3], keepdim=True)    
-            # after (pulls toward target)
-            grad = (p_fake - p_real) / weight_factor
-                
+
+            if self.reverse_dmd:
+                # after (pulls toward target)
+                grad = (p_fake - p_real) / weight_factor
+            else:
+                # before (pulls toward source)
+                grad = (p_real - p_fake) / weight_factor
+                    
             grad = torch.nan_to_num(grad) 
 
         # this loss gives the grad as gradient through autodiff, following https://github.com/ashawkey/stable-dreamfusion 
