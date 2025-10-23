@@ -48,7 +48,8 @@ train() {
       --gan_adv_loss "${GAN_ADV_LOSS:-}" \
       ${USE_BF16:-} \
       --grad_accum_steps "${GRAD_ACCUM_STEPS:-1}" \
-      ${REVERSE_DMD:-}
+      ${REVERSE_DMD:-} \
+      ${TRAIN_FAKE_ON_REAL:-}
 }
 
 # -----------------------
@@ -125,10 +126,10 @@ trap teardown EXIT INT TERM ERR
 
 # Start test in its own process group so children share the PGID
 
-# export -f test_stream_conditional
-# ( setsid bash -c 'test_stream_conditional' ) &
-# TEST_PID=$!
-# TEST_PGID="$(ps -o pgid= "$TEST_PID" | tr -d ' ')" || true
+export -f test_stream_conditional
+( setsid bash -c 'test_stream_conditional' ) &
+TEST_PID=$!
+TEST_PGID="$(ps -o pgid= "$TEST_PID" | tr -d ' ')" || true
 
 # Run training in foreground; on exit (success or error), EXIT trap runs teardown()
 train
