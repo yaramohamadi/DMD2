@@ -7,12 +7,12 @@ mkdir -p "$LOGDIR"
 
 GEN_CLS_LOSS_WEIGHT=(15e-3)
 CLS_LOSS_WEIGHT=(5e-2)
-GEN_LR=(5e-8)
+GEN_LRS=(5e-7)
 
 export WANDB_PROJECT="CAT_FFHQ_distilled"
 
 # paired sweep, local runs\
-for lr in "${GEN_LR[@]}"; do
+for lr in "${GEN_LRS[@]}"; do
   for i in "${!GEN_CLS_LOSS_WEIGHT[@]}"; do
     glw="${GEN_CLS_LOSS_WEIGHT[$i]}"
     clw="${CLS_LOSS_WEIGHT[$i]}"
@@ -20,14 +20,12 @@ for lr in "${GEN_LR[@]}"; do
 
     echo "[LOCAL] lr=$lr  GEN_CLS_LOSS_WEIGHT=$glw  CLS_LOSS_WEIGHT=$clw  tag=$tag"
 
-    export GEN_LR="2e-6"
+    export GEN_LR=lr
     export DMD_LOSS_WEIGHT="1"
     export CHECKPOINT_PATH="0_myfiles_face/checkpoint_path/FFHQ_distilled_weights/checkpoint_model_037200"
     export DATASET_NAME="cat"
-    export GEN_LR="$lr" 
     export GEN_CLS_LOSS_WEIGHT="$glw" 
     export CLS_LOSS_WEIGHT="$clw" 
-    export GEN_LR="${GEN_LR[0]}" 
     export GRAD_ACCUM_STEPS=1
     export BATCH_SIZE=1
     export NUM_DENOISING_STEP=3 

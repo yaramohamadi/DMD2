@@ -252,7 +252,8 @@ class dhariwalGuidance(nn.Module):
             p_fake = (latents - pred_fake_image) 
 
             weight_factor = torch.abs(p_real).mean(dim=[1, 2, 3], keepdim=True)    
-            grad = (p_real - p_fake) / weight_factor
+            # after (pulls toward target)
+            grad = (p_fake - p_real) / weight_factor
                 
             grad = torch.nan_to_num(grad) 
 
