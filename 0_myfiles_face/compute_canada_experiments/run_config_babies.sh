@@ -5,13 +5,13 @@
 #SBATCH --gres=gpu:h100:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=20G
-#SBATCH --time=00:10:00
+#SBATCH --time=03:15:00
 #SBATCH --mail-user=yara.mohammadi-bahram.1@ens.etsmtl.ca
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --output=0_myfiles_face/slurm/%x-%j.out
 #SBATCH --error=0_myfiles_face/slurm/%x-%j.err
 
-export SERVER="${SERVER:-"local"}"
+export SERVER="${SERVER:-"cc"}"
 
 if [[ "$SERVER" != "local" && "$SERVER" != "cc" ]]; then
   echo "Usage: $0 {local|cc}"
@@ -61,7 +61,7 @@ export MASTER_PORT=$(shuf -i 20000-65000 -n 1)
 
 export GRAD_ACCUM_STEPS="${GRAD_ACCUM_STEPS:-4}"
 export BATCH_SIZE="${BATCH_SIZE:-1}"
-export EVAL_BATCH_SIZE=10
+export EVAL_BATCH_SIZE=24
 export NUM_DENOISING_STEP="${NUM_DENOISING_STEP:-3}"
 export TRAIN_ITERS=10000
 export DATASET_SIZE="${DATASET_SIZE:-10}"  # 10 5 1
@@ -115,9 +115,9 @@ export GEN_CLS_LOSS_WEIGHT="${GEN_CLS_LOSS_WEIGHT:-15e-3}" #-3e-3
 export DMD_LOSS_WEIGHT="${DMD_LOSS_WEIGHT:-1}"
 export DIFFUSION_GAN_MAX_TIMESTEP=1000
 
-export LOG_ITERS=50
-export WANDB_ITERS=50
-export MAX_CHECKPOINT=50
+export LOG_ITERS=100
+export WANDB_ITERS=100
+export MAX_CHECKPOINT=100
 
 export FID_NPZ_ROOT="$PROJECT_PATH/datasets/fid_npz"
 export FEWSHOT_DATASET="$PROJECT_PATH/datasets/targets/${DATASET_SIZE}_${DATASET_NAME}/0"
@@ -145,7 +145,7 @@ export DEN_FLAG="--denoising"
 export BEST_FLAG=""
 export CHECKPOINT_PATH="${CHECKPOINT_PATH:-}"
 
-export TRAIN_FAKE_ON_REAL="${TRAIN_FAKE_ON_REAL:-}" # --train_fake_on_real
+export TRAIN_FAKE_ON_REAL="${TRAIN_FAKE_ON_REAL:-"--train_fake_on_real"}" # 
 
 export EXPERIMENT_NAME="${DATASET_NAME}_lr${GEN_LR}_bs${BATCH_SIZE}_dn${NUM_DENOISING_STEP}_${TRAIN_FAKE_ON_REAL}_DMD${DMD_LOSS_WEIGHT}_GClsw${GEN_CLS_LOSS_WEIGHT}_${EXTRA_TAG}"
 export OUTPUT_PATH="0_myfiles_face/checkpoint_path/$EXPERIMENT_NAME"
