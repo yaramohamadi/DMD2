@@ -145,7 +145,7 @@ export DEN_FLAG="--denoising"
 export BEST_FLAG=""
 export CHECKPOINT_PATH="${CHECKPOINT_PATH:-}"
 
-export TRAIN_FAKE_ON_REAL="${TRAIN_FAKE_ON_REAL:-"--train_fake_on_real"}" # 
+export TRAIN_FAKE_ON_REAL="${TRAIN_FAKE_ON_REAL:-"--train_fake_on_real"}" #  --train_fake_on_real
 
 export EXPERIMENT_NAME="${DATASET_NAME}_lr${GEN_LR}_bs${BATCH_SIZE}_dn${NUM_DENOISING_STEP}_${TRAIN_FAKE_ON_REAL}_DMD${DMD_LOSS_WEIGHT}_GClsw${GEN_CLS_LOSS_WEIGHT}_${EXTRA_TAG}"
 export OUTPUT_PATH="0_myfiles_face/checkpoint_path/$EXPERIMENT_NAME"

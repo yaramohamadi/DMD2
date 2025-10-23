@@ -23,15 +23,15 @@ submit_run () {
 }
 # ------------------------------------------------------------------
 
-GEN_CLS_LOSS_WEIGHTS=(15e-3)
-CLS_LOSS_WEIGHTS=(5e-2)
+GEN_CLS_LOSS_WEIGHTS=(0)
+CLS_LOSS_WEIGHTS=(0)
 GEN_LRS=(2e-6)
 
 # sweep values
-DMD_LOSS_WEIGHTS=(0 0.20 1)
+DMD_LOSS_WEIGHTS=(1)
 
 # fixed flags you always want
-export TRAIN_FAKE_ON_REAL=""
+export TRAIN_FAKE_ON_REAL="--train_fake_on_real"
 export WANDB_PROJECT="FAKE_ONLINE_TEACHER_SWEEP"
 
 DATASETS=("metfaces")
