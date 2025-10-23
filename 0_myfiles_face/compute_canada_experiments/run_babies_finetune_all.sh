@@ -9,7 +9,7 @@ GEN_CLS_LOSS_WEIGHTS=(15e-3)
 CLS_LOSS_WEIGHTS=(5e-2)
 GEN_LRS=(2e-7)
 
-export WANDB_PROJECT="Babies_FINETUNE"
+export WANDB_PROJECT="Babies_eval_grid"
 
 # paired sweep, local runs
 for dd in all; do
@@ -27,7 +27,7 @@ for dd in all; do
       export TOTAL_EVAL_SAMPLES=5000
       export LOG_ITERS=100
       # ----------------------------------
-      export CHECKPOINT_PATH="0_myfiles_face/checkpoint_path/FFHQ_distilled_weights/checkpoint_model_037200/"
+      export CHECKPOINT_PATH="0_myfiles_face/checkpoint_path/babies_lr2e-6_bs1_dn3_DMD1_GClsw15e-3__gan_bce/checkpoint_best"
       export DATASET_NAME="babies"
       export GEN_LR="$lr" 
       export GEN_CLS_LOSS_WEIGHT="$glw" 

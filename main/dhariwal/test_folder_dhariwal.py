@@ -609,7 +609,7 @@ def evaluate():
 
     # --- QUICK OVERRIDE: force a specific checkpoint and skip everything else ---
     from pathlib import Path
-    FORCE_CKPT = "0_myfiles_face/checkpoint_path/FFHQ_distilled_weights/checkpoint_model_037200"
+    FORCE_CKPT = "0_myfiles_face/checkpoint_path/babies_lr2e-6_bs1_dn3_DMD1_GClsw15e-3__gan_bce/checkpoint_best"
     ckpt_path = Path(FORCE_CKPT)
     if not ckpt_path.exists():
         raise FileNotFoundError(f"Forced checkpoint not found: {ckpt_path}")
