@@ -31,7 +31,7 @@ train() {
       --real_image_path "$REAL_IMAGE_PATH" \
       --dfake_gen_update_ratio "$DFAKE_GEN_UPDATE_RATIO" \
       --cls_loss_weight "$CLS_LOSS_WEIGHT" \
-      --gan_classifier \
+      ${GAN_CLASSIFIER-} \
       --gen_cls_loss_weight "$GEN_CLS_LOSS_WEIGHT" \
       --dmd_loss_weight "$DMD_LOSS_WEIGHT" \
       --diffusion_gan \
@@ -48,9 +48,13 @@ train() {
       --gan_adv_loss "${GAN_ADV_LOSS:-}" \
       ${USE_BF16:-} \
       --grad_accum_steps "${GRAD_ACCUM_STEPS:-1}" \
-      ${REVERSE_DMD:-} \
-      ${TRAIN_FAKE_ON_REAL:-}
+      ${REVERSE_DMD-} \
+      ${TRAIN_FAKE_ON_REAL-} \
+      --use_source_teacher "$USE_SOURCE_TEACHER" \
+      --use_target_teacher "$USE_TARGET_TEACHER" \
+      --train_target_teacher "$TRAIN_TARGET_TEACHER"
 }
+
 
 # -----------------------
 # Testing (streaming conditional)
@@ -126,10 +130,10 @@ trap teardown EXIT INT TERM ERR
 
 # Start test in its own process group so children share the PGID
 
-export -f test_stream_conditional
-( setsid bash -c 'test_stream_conditional' ) &
-TEST_PID=$!
-TEST_PGID="$(ps -o pgid= "$TEST_PID" | tr -d ' ')" || true
+# export -f test_stream_conditional
+# ( setsid bash -c 'test_stream_conditional' ) &
+# TEST_PID=$!
+# TEST_PGID="$(ps -o pgid= "$TEST_PID" | tr -d ' ')" || true
 
 # Run training in foreground; on exit (success or error), EXIT trap runs teardown()
 train

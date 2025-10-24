@@ -5,7 +5,7 @@
 #SBATCH --gres=gpu:h100:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=20G
-#SBATCH --time=03:15:00
+#SBATCH --time=00:10:00
 #SBATCH --mail-user=yara.mohammadi-bahram.1@ens.etsmtl.ca
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --output=0_myfiles_face/slurm/%x-%j.out
@@ -61,7 +61,7 @@ export MASTER_PORT=$(shuf -i 20000-65000 -n 1)
 
 export GRAD_ACCUM_STEPS="${GRAD_ACCUM_STEPS:-4}"
 export BATCH_SIZE="${BATCH_SIZE:-1}"
-export EVAL_BATCH_SIZE=24
+export EVAL_BATCH_SIZE=10
 export NUM_DENOISING_STEP="${NUM_DENOISING_STEP:-3}"
 export TRAIN_ITERS=10000
 export DATASET_SIZE="${DATASET_SIZE:-10}"  # 10 5 1
@@ -115,24 +115,24 @@ export GEN_CLS_LOSS_WEIGHT="${GEN_CLS_LOSS_WEIGHT:-15e-3}" #-3e-3
 export DMD_LOSS_WEIGHT="${DMD_LOSS_WEIGHT:-1}"
 export DIFFUSION_GAN_MAX_TIMESTEP=1000
 
-export LOG_ITERS=100
-export WANDB_ITERS=100
-export MAX_CHECKPOINT=100
+export LOG_ITERS=50
+export WANDB_ITERS=50
+export MAX_CHECKPOINT=50
 
 export FID_NPZ_ROOT="$PROJECT_PATH/datasets/fid_npz"
 export FEWSHOT_DATASET="$PROJECT_PATH/datasets/targets/${DATASET_SIZE}_${DATASET_NAME}/0"
 export TOTAL_EVAL_SAMPLES=5000
 export CONDITIONING_SIGMA=80.0
 export LPIPS_CLUSTER_SIZE=100
-export NO_LPIPS=${NO_LPIPS-}  # --no_lpips
+export NO_LPIPS=${NO_LPIPS:-}  # --no_lpips
 export USE_BF16="--use_bf16" # --use_bf16
 
 export GAN_HEAD_TYPE="global"
 export GAN_HEAD_LAYERS="${GAN_HEAD_LAYERS:-"all"}"
 export GAN_ADV_LOSS="${GAN_ADV_LOSS:-bce}"
-export GAN_MULTIHEAD="${GAN_MULTIHEAD-"--gan_multihead"}" # "--gan_multihead"
+export GAN_MULTIHEAD="${GAN_MULTIHEAD:-"--gan_multihead"}" # "--gan_multihead"
 
-export REVERSE_DMD="${REVERSE_DMD-}"
+export REVERSE_DMD="${REVERSE_DMD:-}"
 
 export ACCELERATE_LOG_LEVEL=error
 export TRANSFORMERS_VERBOSITY=error
@@ -143,21 +143,15 @@ export GEN_LR="${GEN_LR:-2e-6}"  # 2e-6 5e-8
 
 export DEN_FLAG="--denoising"
 export BEST_FLAG=""
-export CHECKPOINT_PATH="${CHECKPOINT_PATH-}"
+export CHECKPOINT_PATH="${CHECKPOINT_PATH:-}"
 
-export TRAIN_FAKE_ON_REAL="${TRAIN_FAKE_ON_REAL-}" #  --train_fake_on_real
-
-export USE_SOURCE_TEACHER="${USE_SOURCE_TEACHER:-1.0}"
-export USE_TARGET_TEACHER="${USE_TARGET_TEACHER:-0.0}"
-export TRAIN_TARGET_TEACHER="${TRAIN_TARGET_TEACHER:-1.0}"
-
-export GAN_CLASSIFIER="${GAN_CLASSIFIER-"--gan_classifier"}" # --gan_classifier
-
+export TRAIN_FAKE_ON_REAL="${TRAIN_FAKE_ON_REAL:-}" # --train_fake_on_real
 
 export EXPERIMENT_NAME="${DATASET_NAME}_lr${GEN_LR}_bs${BATCH_SIZE}_dn${NUM_DENOISING_STEP}_${TRAIN_FAKE_ON_REAL}_DMD${DMD_LOSS_WEIGHT}_GClsw${GEN_CLS_LOSS_WEIGHT}_${EXTRA_TAG}"
 export OUTPUT_PATH="0_myfiles_face/checkpoint_path/$EXPERIMENT_NAME"
 # "$PROJECT_PATH/checkpoint_path/$EXPERIMENT_NAME"
 export WANDB_NAME="$EXPERIMENT_NAME"
+
 
 
 echo "DATASET_NAME ${DATASET_NAME}"
@@ -175,11 +169,6 @@ echo "TRAIN_GPUS ${TRAIN_GPUS}"
 echo "TEST_GPUS ${TEST_GPUS}"
 echo "NPROC_PER_NODE ${NPROC_PER_NODE}"
 echo "NNODES ${NNODES}"
-echo "TRAIN_FAKE_ON_REAL ${TRAIN_FAKE_ON_REAL}"
-echo "USE_SOURCE_TEACHER ${USE_SOURCE_TEACHER}"
-echo "USE_TARGET_TEACHER ${USE_TARGET_TEACHER}"
-echo "TRAIN_TARGET_TEACHER ${TRAIN_TARGET_TEACHER}"
-echo "GAN_CLASSIFIER ${GAN_CLASSIFIER}"
 
 echo "_____________________________"
 

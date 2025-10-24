@@ -23,6 +23,7 @@ from pathlib import Path
 import shutil
 from collections import defaultdict
 from contextlib import nullcontext
+from accelerate.utils import ProjectConfiguration, DistributedDataParallelKwargs
 
 import os, glob, torch
 from collections import OrderedDict
@@ -112,12 +113,18 @@ class Trainer:
 
         accelerator_project_config = ProjectConfiguration(logging_dir=args.output_path)
 
+        ddp_kwargs = DistributedDataParallelKwargs(
+            find_unused_parameters=True,          # <-- important
+            gradient_as_bucket_view=True          # small perf win; optional
+            # static_graph=False is default; keep it False since your graph changes
+        )
+
         accelerator = Accelerator(
-            gradient_accumulation_steps=args.grad_accum_steps, # 2 times since for each step, we have 2 models (guidance + generator)
+            gradient_accumulation_steps=args.grad_accum_steps,
             mixed_precision="bf16" if args.use_bf16 else "no",
             log_with="wandb",
             project_config=accelerator_project_config,
-            kwargs_handlers=None
+            kwargs_handlers=[ddp_kwargs],         # <-- add this
         )
 
         set_seed(args.seed + accelerator.process_index)
@@ -205,11 +212,18 @@ class Trainer:
         
         print("loading learning rate schedulers and optimizers")
         print(f"Generator lr: {args.generator_lr}, Guidance lr: {args.guidance_lr}")
+        # ---- Guidance optimizer: exclude target_unet params ----
+        guidance_params = []
+        for n, p in self.model.guidance_model.named_parameters():
+            if not p.requires_grad:
+                continue
+            # Keep guidance grads off the target teacher
+            if n.startswith("target_unet."):
+                continue
+            guidance_params.append(p)
+
         self.optimizer_guidance = torch.optim.AdamW(
-            [param for param in self.model.guidance_model.parameters() if param.requires_grad], 
-            lr=args.guidance_lr, 
-            betas=(0.9, 0.999),  # pytorch's default 
-            weight_decay=0.01  # pytorch's default 
+            guidance_params, lr=args.guidance_lr, betas=(0.9, 0.999), weight_decay=0.01
         )
         self.optimizer_generator = torch.optim.AdamW(
             [param for param in self.model.feedforward_model.parameters() if param.requires_grad], 
@@ -233,14 +247,49 @@ class Trainer:
             num_training_steps=args.train_iters 
         )
 
+        # ---- Optional Target-Teacher optimizer (separate step/schedule) ----
+        self.optimizer_target_teacher = None
+        self.scheduler_target_teacher = None
+        if args.use_target_teacher and args.train_target_teacher:
+            tt_params = [p for n, p in self.model.guidance_model.named_parameters()
+                        if n.startswith("target_unet.") and p.requires_grad]
+            self.optimizer_target_teacher = torch.optim.AdamW(
+                tt_params,
+                lr=args.guidance_lr,
+                betas=(0.9, 0.999),
+                weight_decay=0.01
+            )
+            self.scheduler_target_teacher = get_scheduler(
+                "constant_with_warmup",
+                optimizer=self.optimizer_target_teacher,
+                num_warmup_steps=args.warmup_step,
+                num_training_steps=args.train_iters
+            )
+
         # the self.model is not wrapped in ddp, only its two subnetworks are wrapped 
-        (
-            self.model.feedforward_model, self.model.guidance_model, self.optimizer_guidance, 
-            self.optimizer_generator, self.scheduler_guidance, self.scheduler_generator 
-        ) = accelerator.prepare(
-            self.model.feedforward_model, self.model.guidance_model, self.optimizer_guidance, 
-            self.optimizer_generator, self.scheduler_guidance, self.scheduler_generator
-        ) 
+        prepare_args = [
+            self.model.feedforward_model,
+            self.model.guidance_model,
+            self.optimizer_guidance,
+            self.optimizer_generator,
+            self.scheduler_guidance,
+            self.scheduler_generator,
+        ]
+
+        if self.optimizer_target_teacher is not None:
+            prepare_args += [self.optimizer_target_teacher, self.scheduler_target_teacher]
+
+        prepared = accelerator.prepare(*prepare_args)
+
+        (self.model.feedforward_model,
+        self.model.guidance_model,
+        self.optimizer_guidance,
+        self.optimizer_generator,
+        self.scheduler_guidance,
+        self.scheduler_generator, *maybe_tt) = prepared
+
+        if self.optimizer_target_teacher is not None:
+            (self.optimizer_target_teacher, self.scheduler_target_teacher) = maybe_tt
 
         self.accelerator = accelerator
         self.train_iters = args.train_iters
@@ -304,6 +353,7 @@ class Trainer:
             'pred_realism_on_real',
             'critic_fake',
             'critic_real',
+            'tt_pred_x0',
         ]
 
         for k in tkeys:
@@ -427,6 +477,11 @@ class Trainer:
 
 
     def train_one_step(self):
+
+        def _strip_module_prefix_name(name: str) -> str:
+            return name[7:] if name.startswith("module.") else name
+
+
         self.model.train()
         accelerator = self.accelerator
         accum = accelerator.gradient_accumulation_steps
@@ -462,6 +517,8 @@ class Trainer:
         # Stable within the window
         COMPUTE_GENERATOR_GRADIENT = (self.global_step % self.dfake_gen_update_ratio == 0)
 
+        tt_out = None
+
         generator_grad_norm = torch.tensor(0.0, device=accelerator.device)
         guidance_grad_norm  = torch.tensor(0.0, device=accelerator.device)
 
@@ -469,21 +526,20 @@ class Trainer:
         # Single accumulation gate (GEN)
         # -------------------------------
         with accelerator.accumulate(self.model.feedforward_model):
-            # ---- Generator turn ----
+        # ------------------- Generator turn -------------------
             gen_loss_dict, gen_log_dict = self.model(
                 scaled_noise, timestep_sigma, labels,
                 real_train_dict=real_train_dict,
                 compute_generator_gradient=COMPUTE_GENERATOR_GRADIENT,
                 generator_turn=True, guidance_turn=False
             )
-
             if COMPUTE_GENERATOR_GRADIENT:
                 generator_loss = self.dmd_loss_weight * gen_loss_dict["loss_dm"]
                 if self.gan_classifier:
                     generator_loss = generator_loss + gen_loss_dict["gen_cls_loss"] * self.gen_cls_loss_weight
                 accelerator.backward(generator_loss)
 
-            # ---- Guidance turn (no sync until end of window) ----
+            # ------------------- Guidance turn --------------------
             guid_sync_ctx = nullcontext() if accelerator.sync_gradients else accelerator.no_sync(self.model.guidance_model)
             with guid_sync_ctx:
                 guid_loss_dict, guid_log_dict = self.model(
@@ -493,26 +549,27 @@ class Trainer:
                     generator_turn=False, guidance_turn=True,
                     guidance_data_dict=gen_log_dict.get('guidance_data_dict', None)
                 )
-
                 guidance_loss = guid_loss_dict["loss_fake_mean"]
                 if self.gan_classifier:
                     guidance_loss = guidance_loss + guid_loss_dict["guidance_cls_loss"] * self.cls_loss_weight
                 accelerator.backward(guidance_loss)
 
-            # ---- Step both once at sync (preserve G then D order) ----
+            # ------------- Step G and Guidance (sync edge) -------------
             if accelerator.sync_gradients:
                 if self.label_dim > 0:
-                    # optional label-emb clipping per-module if you re-enable it
                     pass
 
+                # clip & step generator
                 generator_grad_norm = torch.nn.utils.clip_grad_norm_(
                     self.model.feedforward_model.parameters(), self.max_grad_norm
                 )
-                guidance_grad_norm = accelerator.clip_grad_norm_(
-                    self.model.guidance_model.parameters(), self.max_grad_norm
-                )
+                # clip & step guidance (exclude TT params)
+                guidance_params_no_tt = [
+                    p for n, p in self.model.guidance_model.named_parameters()
+                    if (not _strip_module_prefix_name(n).startswith("target_unet.")) and p.grad is not None
+                ]
+                guidance_grad_norm = accelerator.clip_grad_norm_(guidance_params_no_tt, self.max_grad_norm)
 
-                # Step generator then guidance (keep your original order)
                 self.optimizer_generator.step()
                 self.optimizer_generator.zero_grad(set_to_none=True)
                 self.scheduler_generator.step()
@@ -521,15 +578,57 @@ class Trainer:
                 self.optimizer_guidance.zero_grad(set_to_none=True)
                 self.scheduler_guidance.step()
 
+            # ==========================================================
+            # NEW: Target-Teacher update AFTER guidance step
+            # Run once per optimizer step, outside the generator accumulate block
+            # ==========================================================
+            if accelerator.sync_gradients and COMPUTE_GENERATOR_GRADIENT and getattr(self, "optimizer_target_teacher", None) is not None:
+                gm = self.model.guidance_model
+                inner_gm = gm.module if hasattr(gm, "module") else gm  # unwrap DDP
 
-        # ---- safe-merge logs so guidance can’t clobber images ----
+                # Fresh TT forward (optionally use the same generated image, detached)
+                with torch.enable_grad():
+                    tt_out = inner_gm.compute_loss_target_teacher(
+                        real_image=real_train_dict["real_image"],
+                        real_label=real_train_dict["real_label"],
+                        maybe_fake_image=(gen_log_dict.get("generated_image", None).detach()
+                                        if ('gen_log_dict' in locals() and gen_log_dict.get("generated_image", None) is not None)
+                                        else None),
+                        train_on_real=getattr(self.args, "target_teacher_train_on_real", True),
+                        train_on_fake=getattr(self.args, "target_teacher_train_on_fake", False),
+                    )
+                    tt_loss = tt_out["loss_target_teacher"] * getattr(self.args, "target_teacher_loss_weight", 1.0)
+
+                # This backward is the ONLY one happening now; guidance already reduced
+                accelerator.backward(tt_loss)
+
+                # clip only TT params and step TT optimizer
+                tt_params_for_clip = [
+                    p for n, p in self.model.guidance_model.named_parameters()
+                    if _strip_module_prefix_name(n).startswith("target_unet.") and p.grad is not None
+                ]
+                if self.max_grad_norm and self.max_grad_norm > 0:
+                    torch.nn.utils.clip_grad_norm_(tt_params_for_clip, max_norm=self.max_grad_norm)
+
+                self.optimizer_target_teacher.step()
+                self.optimizer_target_teacher.zero_grad(set_to_none=True)
+                if getattr(self, "scheduler_target_teacher", None) is not None:
+                    self.scheduler_target_teacher.step()
+
+                if hasattr(self, "wandb"):
+                    import wandb
+                    wandb.log({"tt/step": 1.0, "tt/loss": float(tt_out["loss_target_teacher"].detach().item())}, step=self.global_step)
+
+        # ---- safe-merge logs for W&B
         log_dict = gen_log_dict.copy()
         for k, v in guid_log_dict.items():
             if (k not in log_dict) or isinstance(v, torch.Tensor):
                 log_dict[k] = v
+        if tt_out is not None:
+            if "tt_pred_x0" in tt_out: log_dict["tt_pred_x0"] = tt_out["tt_pred_x0"]
+            if "tt_true_x0" in tt_out: log_dict["tt_true_x0"] = tt_out["tt_true_x0"]
+            log_dict["tt/loss"] = tt_out["loss_target_teacher"].detach()
         loss_dict = {**gen_loss_dict, **guid_loss_dict}
-
-        self.log_everything(loss_dict, log_dict, generator_grad_norm, guidance_grad_norm, accum)
 
 
     def train(self):
@@ -586,7 +685,17 @@ class Trainer:
                     faketrain_latents       = agg_or_last('faketrain_latents')
                     faketrain_noisy_latents = agg_or_last('faketrain_noisy_latents')
                     faketrain_x0_pred       = agg_or_last('faketrain_x0_pred')
+                    
+                    data_dict = {}  # add this before you touch data_dict
 
+                    # fetch TT tensors if present (already gathered)
+                    tt_pred_x0 = batched.get('tt_pred_x0', None)
+
+                    if tt_pred_x0 is not None:
+                        tt_pred_grid = prepare_images_for_saving(tt_pred_x0, resolution=self.resolution)
+                        data_dict["tt/preview_pred"] = wandb.Image(tt_pred_grid)
+
+                    wandb.log(data_dict, step=self.global_step)
                     
                     # -------- visuals & simple stats --------
                     gen_img_vis = (generated_image * 0.5 + 0.5).clamp(0, 1)
@@ -822,6 +931,13 @@ def parse_args():
         help="Probability to drop labels for the entire micro-batch (CFG-style).")
     parser.add_argument("--train_fake_on_real", action="store_true")
     parser.add_argument("--reverse_dmd", action="store_true",)
+
+    # ---------------- Adding target teacher --------------------
+    parser.add_argument("--use_source_teacher", type=float, default=1.0,
+        help="Use a source teacher model for DMD loss")
+    parser.add_argument("--use_target_teacher", type=float, default=0.0,)
+    parser.add_argument("--train_target_teacher", type=float, default=1.0,
+        help="Train the target teacher model along with the main model")
     # -----------------------------------------------------------
 
     args = parser.parse_args()

@@ -7,6 +7,7 @@ import torch
 import copy 
 from main.dhariwal.dhariwal_network import _map_sigma_to_t, _onehot_to_class_index
 from typing import Tuple
+from typing import Optional
 
 # utils
 def _avg_spatial(x):
@@ -92,6 +93,9 @@ class dhariwalGuidance(nn.Module):
         self.ls_gen       = float(getattr(args, 'ls_target_gen', 1.0))
         self.r1_gamma     = float(getattr(args, 'r1_gamma', 0.0))
 
+        self.use_source_teacher  = getattr(args, "use_source_teacher", True)
+        self.use_target_teacher  = getattr(args, "use_target_teacher", False)
+        self.train_target_teacher = getattr(args, "train_target_teacher", False)
         self.train_fake_on_real = getattr(args, 'train_fake_on_real', False)
 
         if self.train_fake_on_real:
@@ -120,6 +124,23 @@ class dhariwalGuidance(nn.Module):
 
         param = next(self.fake_unet.parameters())
 
+
+        if self.use_target_teacher:
+            args_ttar = copy.deepcopy(args)
+            self.target_unet = get_edm_network(args_ttar).to(accelerator.device)
+            # init from the SAME weights as source teacher (your .pt model_id)
+            self.target_unet = load_pt_with_logs(self.target_unet, args.model_id)
+            self.target_unet.requires_grad_(bool(self.train_target_teacher))
+            # match the map_augment cleanup you do for real_unet
+            if self.train_target_teacher == False:
+                try:
+                    del self.target_unet.model.map_augment
+                    self.target_unet.model.map_augment = None
+                except Exception:
+                    pass
+        else:
+            self.target_unet = None
+
         # some training hyper-parameters 
         self.sigma_data = args.sigma_data
         self.sigma_max = args.sigma_max
@@ -131,6 +152,9 @@ class dhariwalGuidance(nn.Module):
         self.gan_classifier = args.gan_classifier
         self.diffusion_gan = args.diffusion_gan 
         self.diffusion_gan_max_timestep = args.diffusion_gan_max_timestep
+
+        
+
         
         # Figure out bottleneck channels dynamically (works for 256x256 ADM)
         with torch.no_grad():
@@ -247,7 +271,13 @@ class dhariwalGuidance(nn.Module):
             
             noisy_latents = latents + timestep_sigma.reshape(-1, 1, 1, 1) * noise
 
-            pred_real_image = self.real_unet(noisy_latents, timestep_sigma, None) # Teacher = Unconditional for face dataset
+            if self.use_target_teacher and self.target_unet is not None:
+                print("Using target teacher for DMD")
+                pred_real_image = self.target_unet(noisy_latents, timestep_sigma, labels)  # target teacher with (maybe-null) labels
+            else:
+                print("Using source teacher for DMD")
+                pred_real_image = self.real_unet(noisy_latents, timestep_sigma, None)  # unconditional teacher
+            
             pred_fake_image = self.fake_unet(noisy_latents, timestep_sigma, labels) # student sees (maybe-null) labels
 
             p_real = (latents - pred_real_image) 
@@ -327,6 +357,64 @@ class dhariwalGuidance(nn.Module):
             "faketrain_x0_pred": fake_x0_pred.detach()
         }
         return loss_dict, fake_log_dict
+
+
+    def compute_loss_target_teacher(
+        self,
+        real_image: torch.Tensor,
+        real_label: Optional[torch.Tensor],
+        maybe_fake_image: Optional[torch.Tensor] = None,
+        train_on_real: bool = True,
+        train_on_fake: bool = False,
+    ):
+        """
+        Standard EDM-style denoising loss for the Target Teacher (TT).
+        Mirrors compute_loss_fake, but uses self.target_unet and real images by default.
+        """
+        assert self.target_unet is not None, "Target teacher is not initialized"
+
+        losses = []
+
+        if train_on_real:
+            latents = real_image.detach()
+            noise = torch.randn_like(latents)
+            timesteps = torch.randint(
+                0, self.num_train_timesteps,
+                [latents.shape[0], 1, 1, 1],
+                device=latents.device, dtype=torch.long
+            )
+            timestep_sigma = self.karras_sigmas[timesteps]
+            noisy_latents = latents + timestep_sigma.reshape(-1,1,1,1) * noise
+            x0_pred = self.target_unet(noisy_latents, timestep_sigma, real_label)
+            snrs = timestep_sigma**-2
+            weights = snrs + 1.0 / self.sigma_data**2
+            losses.append(torch.mean(weights * (x0_pred - latents) ** 2))
+
+            tt_pred_x0 = x0_pred.detach()
+
+        if train_on_fake and (maybe_fake_image is not None):
+            latents_f = maybe_fake_image.detach()
+            noise_f = torch.randn_like(latents_f)
+            t_f = torch.randint(
+                0, self.num_train_timesteps,
+                [latents_f.shape[0], 1, 1, 1],
+                device=latents_f.device, dtype=torch.long
+            )
+            sigma_f = self.karras_sigmas[t_f]
+            noisy_latents_f = latents_f + sigma_f.reshape(-1,1,1,1) * noise_f
+            x0_pred_f = self.target_unet(noisy_latents_f, sigma_f, real_label)
+            snrs_f = sigma_f**-2
+            weights_f = snrs_f + 1.0 / self.sigma_data**2
+            losses.append(torch.mean(weights_f * (x0_pred_f - latents_f) ** 2))
+
+            tt_pred_x0 = x0_pred_f.detach()
+
+        total = sum(losses) / max(1, len(losses))
+        return {"loss_target_teacher": total,
+                "tt_pred_x0": tt_pred_x0
+                }
+
+
 
     def compute_cls_logits(self, image, label):
         if self.diffusion_gan:
