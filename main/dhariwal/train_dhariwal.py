@@ -363,7 +363,7 @@ class Trainer:
                 self._mb_tensors[k].append(v.detach())
 
         # Scalars we want to average over the window (extend as needed)
-        for k in ['loss_dm', 'loss_fake_mean', 'guidance_cls_loss', 'gen_cls_loss']:
+        for k in ['loss_dm', 'loss_fake_mean', 'guidance_cls_loss', 'gen_cls_loss', 'loss_target_teacher']:
             if k in loss_dict:
                 v = loss_dict[k]
                 self._mb_scalars[k] += (float(v.detach().item()) if torch.is_tensor(v) else float(v))
@@ -615,10 +615,6 @@ class Trainer:
                 if getattr(self, "scheduler_target_teacher", None) is not None:
                     self.scheduler_target_teacher.step()
 
-                if hasattr(self, "wandb"):
-                    import wandb
-                    wandb.log({"tt/step": 1.0, "tt/loss": float(tt_out["loss_target_teacher"].detach().item())}, step=self.global_step)
-
         # ---- safe-merge logs for W&B
         log_dict = gen_log_dict.copy()
         for k, v in guid_log_dict.items():
@@ -626,9 +622,13 @@ class Trainer:
                 log_dict[k] = v
         if tt_out is not None:
             if "tt_pred_x0" in tt_out: log_dict["tt_pred_x0"] = tt_out["tt_pred_x0"]
-            if "tt_true_x0" in tt_out: log_dict["tt_true_x0"] = tt_out["tt_true_x0"]
+            # add the scalar in a consistent key to be averaged
             log_dict["tt/loss"] = tt_out["loss_target_teacher"].detach()
         loss_dict = {**gen_loss_dict, **guid_loss_dict}
+
+        # ALSO add a scalar entry so _mb_put can average it
+        if tt_out is not None:
+            loss_dict["loss_target_teacher"] = float(tt_out["loss_target_teacher"].detach().item())
 
         self.log_everything(loss_dict, log_dict, generator_grad_norm, guidance_grad_norm, accum)
 
@@ -687,6 +687,7 @@ class Trainer:
                     faketrain_latents       = agg_or_last('faketrain_latents')
                     faketrain_noisy_latents = agg_or_last('faketrain_noisy_latents')
                     faketrain_x0_pred       = agg_or_last('faketrain_x0_pred')
+                    
                     
                     data_dict = {}  # add this before you touch data_dict
 
@@ -750,6 +751,7 @@ class Trainer:
                     # averaged losses over the accumulation window (fall back to current batch if missing)
                     loss_dm_mean        = float(scalar_means.get('loss_dm',        loss_dict['loss_dm']))
                     loss_fake_mean_mean = float(scalar_means.get('loss_fake_mean', loss_dict['loss_fake_mean']))
+                    tt_loss_mean        = float(scalar_means.get('loss_target_teacher', loss_dict.get('loss_target_teacher', 0.0)))
 
                     # grad norms coming from the training step
                     gen_gn = float(generator_grad_norm.item() if torch.is_tensor(generator_grad_norm) else generator_grad_norm)
@@ -767,6 +769,7 @@ class Trainer:
                         "dmtrain_pred_fake_image_grid":   wandb.Image(dmtrain_pred_fake_image_grid),
                         "loss_dm":                        loss_dm_mean,
                         "loss_fake_mean":                 loss_fake_mean_mean,
+                        "tt/loss":                        tt_loss_mean, 
                         "gradient":                       wandb.Image(gradient),
                         "difference":                     wandb.Image(difference),
                         "gradient_scale_grid":            wandb.Image(gradient_scale_grid),
