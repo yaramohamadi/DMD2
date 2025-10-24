@@ -42,17 +42,18 @@ train() {
       --num_denoising_step "$NUM_DENOISING_STEP" \
       --denoising_sigma_end "$DENOISING_SIGMA_END" \
       --label_dropout_p "$LABEL_DROPOUT_P" \
-      ${GAN_MULTIHEAD:-} \
+      ${GAN_MULTIHEAD-} \
       --gan_head_type "${GAN_HEAD_TYPE:-}" \
       --gan_head_layers "${GAN_HEAD_LAYERS:-}" \
       --gan_adv_loss "${GAN_ADV_LOSS:-}" \
-      ${USE_BF16:-} \
+      ${USE_BF16-} \
       --grad_accum_steps "${GRAD_ACCUM_STEPS:-1}" \
       ${REVERSE_DMD-} \
       ${TRAIN_FAKE_ON_REAL-} \
       --use_source_teacher "$USE_SOURCE_TEACHER" \
       --use_target_teacher "$USE_TARGET_TEACHER" \
-      --train_target_teacher "$TRAIN_TARGET_TEACHER"
+      --train_target_teacher "$TRAIN_TARGET_TEACHER" \
+      ${TT_MATCH_GUIDANCE-}
 }
 
 

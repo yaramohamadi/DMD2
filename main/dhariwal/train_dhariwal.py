@@ -582,6 +582,7 @@ class Trainer:
             # NEW: Target-Teacher update AFTER guidance step
             # Run once per optimizer step, outside the generator accumulate block
             # ==========================================================
+            tt_cadence_hits = self.args.tt_match_guidance or COMPUTE_GENERATOR_GRADIENT
             if accelerator.sync_gradients and COMPUTE_GENERATOR_GRADIENT and getattr(self, "optimizer_target_teacher", None) is not None:
                 gm = self.model.guidance_model
                 inner_gm = gm.module if hasattr(gm, "module") else gm  # unwrap DDP
@@ -943,6 +944,12 @@ def parse_args():
     parser.add_argument("--use_target_teacher", type=float, default=0.0,)
     parser.add_argument("--train_target_teacher", type=float, default=1.0,
         help="Train the target teacher model along with the main model")
+    parser.add_argument(
+        "--tt_match_guidance",
+        action="store_true",
+        help="If set, update Target Teacher every optimizer step (same cadence as guidance). "
+            "If not set, TT updates only on generator steps (gated by dfake_gen_update_ratio)."
+    )
     # -----------------------------------------------------------
 
     args = parser.parse_args()

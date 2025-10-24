@@ -78,6 +78,7 @@ export WANDB_API_KEY=37efdaf78afc776eece6c9207e21caaff0ede2c3
 export SEED=10
 export RESOLUTION=256
 
+export TT_MATCH_GUIDANCE="${TT_MATCH_GUIDANCE-}" # --tt_match_guidance
 
 # For label handling ------------------------------------------------------
 # ---- intent switches (set these per run) ----

@@ -5,12 +5,11 @@ LOGDIR="0_myfiles_face/slurm"
 mkdir -p "$LOGDIR"
 
 # --------- mode switch: local vs Compute Canada (sbatch) ----------
-MODE="${MODE:-"local"}"   # set MODE=cc to use sbatch
+MODE="${MODE:-local}"   # set MODE=cc to use sbatch
 submit_run () {
   local tag="$1"
 
   if [[ "$MODE" == "cc" ]]; then
-    # Submit as a Slurm job with per-run exports
     sbatch \
       --job-name="$tag" \
       --output="$LOGDIR/%x-%j.out" \
@@ -33,7 +32,8 @@ EXTRA_TAG="$EXTRA_TAG",\
 USE_SOURCE_TEACHER="$USE_SOURCE_TEACHER",\
 USE_TARGET_TEACHER="$USE_TARGET_TEACHER",\
 TRAIN_TARGET_TEACHER="$TRAIN_TARGET_TEACHER",\
-GAN_CLASSIFIER="$GAN_CLASSIFIER" \
+GAN_CLASSIFIER="$GAN_CLASSIFIER",\
+TT_MATCH_GUIDANCE="$TT_MATCH_GUIDANCE" \
       "$CHILD"
   else
     # Local run
@@ -48,19 +48,21 @@ CLS_LOSS_WEIGHTS=(0)
 GEN_LRS=(2e-6)
 DMD_LOSS_WEIGHTS=(1)
 
-# GAN: disabled (child should conditionally add --gan_classifier only if GAN_CLASSIFIER is non-empty)
+# GAN off unless either cls loss is non-zero (child should use ${GAN_CLASSIFIER-})
 export GAN_CLASSIFIER=""
+
+# TT cadence knob:
+#   ""  -> update TT only on generator steps (default behavior)
+#   "--tt_match_guidance" -> update TT every optimizer step (same cadence as guidance)
+export TT_MATCH_GUIDANCE="--tt_match_guidance"   # set "" to disable
 
 # fixed flags
 export WANDB_PROJECT="METFACES_TARGET_TEACHER_SWEEP"
 
-# Target Teacher switches (match child usage exactly)
-# child passes: --use_source_teacher $USE_SOURCE_TEACHER
-#               --use_target_teacher $USE_TARGET_TEACHER
-#               --train_target_teacher $TRAIN_TARGET_TEACHER   # you said this expects a value now
+# Target Teacher switches
 export USE_SOURCE_TEACHER=0
 export USE_TARGET_TEACHER=1
-export TRAIN_TARGET_TEACHER=1
+export TRAIN_TARGET_TEACHER=1    # if your child expects a value; else make it empty and use ${...:+--train_target_teacher}
 
 DATASETS=("metfaces")
 
@@ -71,7 +73,6 @@ for ds in "${DATASETS[@]}"; do
       clw="${CLS_LOSS_WEIGHTS[$i]}"
 
       for dmdw in "${DMD_LOSS_WEIGHTS[@]}"; do
-        # per-run vars (exported for CHILD)
         export DATASET_NAME="$ds"
         export GEN_LR="$lr"
         export GEN_CLS_LOSS_WEIGHT="$glw"
@@ -82,14 +83,21 @@ for ds in "${DATASETS[@]}"; do
         export BATCH_SIZE=1
         export NUM_DENOISING_STEP=3
 
-        # Let Slurm handle GPU binding; for local you can still set CUDA_VISIBLE_DEVICES inside CHILD if needed
         export TRAIN_GPUS=0
         export TEST_GPUS=1
         export NPROC_PER_NODE=1
         export NNODES=1
 
-        # Tag (no reverse flag now). Include TT settings & GAN state.
-        tt_tag="src${USE_SOURCE_TEACHER}_tgt${USE_TARGET_TEACHER}_trainTT${TRAIN_TARGET_TEACHER}"
+        # If you ever sweep GAN on/off based on weights:
+        if [[ "$glw" == "0" && "$clw" == "0" ]]; then
+          export GAN_CLASSIFIER=""
+        else
+          export GAN_CLASSIFIER="--gan_classifier"
+        fi
+
+        # Cadence tag for clarity
+        cadence_tag="$([ -n "$TT_MATCH_GUIDANCE" ] && echo tt_guid || echo tt_gen)"
+        tt_tag="src${USE_SOURCE_TEACHER}_tgt${USE_TARGET_TEACHER}_trainTT${TRAIN_TARGET_TEACHER}_${cadence_tag}"
         gan_tag="gan$([[ -n "$GAN_CLASSIFIER" ]] && echo 1 || echo 0)"
         tag="TT_${ds}_DMDW${dmdw}_lr${lr}_clw${clw}_glw${glw}_${tt_tag}_${gan_tag}"
 
