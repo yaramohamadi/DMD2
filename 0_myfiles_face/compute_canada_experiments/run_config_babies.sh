@@ -80,6 +80,9 @@ export RESOLUTION=256
 
 export TT_MATCH_GUIDANCE="${TT_MATCH_GUIDANCE-}" # --tt_match_guidance
 
+export DMD_SOURCE_WEIGHT="${DMD_SOURCE_WEIGHT:-1.0}"
+export DMD_TARGET_WEIGHT="${DMD_TARGET_WEIGHT:-1.0}"
+
 # For label handling ------------------------------------------------------
 # ---- intent switches (set these per run) ----
 export EXP_TRAIN_MODE="${EXP_TRAIN_MODE:-V0}"   # one of: V0, V1, V2

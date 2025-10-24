@@ -53,9 +53,10 @@ train() {
       --use_source_teacher "$USE_SOURCE_TEACHER" \
       --use_target_teacher "$USE_TARGET_TEACHER" \
       --train_target_teacher "$TRAIN_TARGET_TEACHER" \
-      ${TT_MATCH_GUIDANCE-}
+      ${TT_MATCH_GUIDANCE-} \
+      --dmd_source_weight "$DMD_SOURCE_WEIGHT" \
+      --dmd_target_weight "$DMD_TARGET_WEIGHT"
 }
-
 
 # -----------------------
 # Testing (streaming conditional)

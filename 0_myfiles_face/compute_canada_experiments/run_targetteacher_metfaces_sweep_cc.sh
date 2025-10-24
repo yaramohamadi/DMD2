@@ -5,8 +5,8 @@ LOGDIR="0_myfiles_face/slurm"
 mkdir -p "$LOGDIR"
 
 # --------- mode switch: local vs Compute Canada (sbatch) ----------
-MODE="${MODE:-cc}"   # set MODE=cc to use sbatch
-export SERVER="${SERVER:-cc}"
+MODE="${MODE:-local}"   # set MODE=cc to use sbatch
+export SERVER="${SERVER:-local}"
 submit_run () {
   local tag="$1"
 
@@ -85,7 +85,7 @@ for ds in "${DATASETS[@]}"; do
         export NUM_DENOISING_STEP=3
 
         export TRAIN_GPUS=0
-        export TEST_GPUS=0
+        export TEST_GPUS=1
         export NPROC_PER_NODE=1
         export NNODES=1
 

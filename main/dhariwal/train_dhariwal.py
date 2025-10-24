@@ -667,7 +667,6 @@ class Trainer:
 
 
     def log_everything(self, loss_dict, log_dict, generator_grad_norm, guidance_grad_norm, accum=None):
-        
         # Feed THIS micro-batch into the accumulation buffers
         self._mb_put(log_dict, loss_dict)
 
@@ -678,159 +677,156 @@ class Trainer:
 
             if self.accelerator.is_main_process:
                 with torch.no_grad():
-                    def agg_or_last(key):
+                    # Safe accessor: returns gathered tensor if available, else current-batch, else None
+                    def agg_or_none(key):
                         v = batched.get(key, None)
-                        return v if v is not None else log_dict[key]
+                        if v is not None:
+                            return v
+                        return log_dict.get(key, None)
 
                     # -------- tensors (aggregated if available) --------
-                    generated_image         = agg_or_last('generated_image')                 # [-1,1]
-                    dmtrain_noisy_latents   = agg_or_last('dmtrain_noisy_latents')           # [-1,1] or [0,1]
-                    dmtrain_pred_real_image = agg_or_last('dmtrain_pred_real_image')         # [-1,1]
-                    dmtrain_pred_fake_image = agg_or_last('dmtrain_pred_fake_image')         # [-1,1]
-                    dmtrain_grad            = agg_or_last('dmtrain_grad')                    # arbitrary range
-                    dmtrain_timesteps       = agg_or_last('dmtrain_timesteps')               # [B]
-                    faketrain_latents       = agg_or_last('faketrain_latents')
-                    faketrain_noisy_latents = agg_or_last('faketrain_noisy_latents')
-                    faketrain_x0_pred       = agg_or_last('faketrain_x0_pred')
+                    generated_image         = agg_or_none('generated_image')                 # [-1,1]
+                    dmtrain_noisy_latents   = agg_or_none('dmtrain_noisy_latents')          # [-1,1] or [0,1]
+                    dmtrain_pred_real_image = agg_or_none('dmtrain_pred_real_image')        # may be None when both teachers active
+                    dmtrain_pred_fake_image = agg_or_none('dmtrain_pred_fake_image')        # [-1,1]
+                    dmtrain_grad            = agg_or_none('dmtrain_grad')                   # may be None when both teachers active
+                    dmtrain_timesteps       = agg_or_none('dmtrain_timesteps')              # [B]
+                    faketrain_latents       = agg_or_none('faketrain_latents')
+                    faketrain_noisy_latents = agg_or_none('faketrain_noisy_latents')
+                    faketrain_x0_pred       = agg_or_none('faketrain_x0_pred')
 
-                    src_pred = batched.get('dmtrain_pred_real_image_source', None)
-                    tgt_pred = batched.get('dmtrain_pred_real_image_target', None)
-                    src_grad = batched.get('dmtrain_grad_source', None)
-                    tgt_grad = batched.get('dmtrain_grad_target', None)
+                    # New per-teacher logs
+                    src_pred = agg_or_none('dmtrain_pred_real_image_source')
+                    tgt_pred = agg_or_none('dmtrain_pred_real_image_target')
+                    src_grad = agg_or_none('dmtrain_grad_source')
+                    tgt_grad = agg_or_none('dmtrain_grad_target')
 
+                    # TT preview (already gathered)
+                    tt_pred_x0 = agg_or_none('tt_pred_x0')
+
+                    # Build a single payload
+                    data_dict = {}
+
+                    # ---- per-teacher previews ----
                     if src_pred is not None:
                         src_pred_grid = prepare_images_for_saving(src_pred, resolution=self.resolution)
                         data_dict["dm/src_pred_grid"] = wandb.Image(src_pred_grid)
-
                     if tgt_pred is not None:
                         tgt_pred_grid = prepare_images_for_saving(tgt_pred, resolution=self.resolution)
                         data_dict["dm/tgt_pred_grid"] = wandb.Image(tgt_pred_grid)
 
                     if src_grad is not None:
-                        # normalize like your existing gradient viz
                         eps = 1e-12
                         gmin, gmax = src_grad.min(), src_grad.max()
                         src_grad_viz = (src_grad - gmin) / (gmax - gmin + eps)
                         src_grad_viz = (src_grad_viz - 0.5) / 0.5
                         data_dict["dm/src_grad_grid"] = wandb.Image(prepare_images_for_saving(src_grad_viz, resolution=self.resolution))
-
                     if tgt_grad is not None:
+                        eps = 1e-12
                         gmin, gmax = tgt_grad.min(), tgt_grad.max()
-                        tgt_grad_viz = (tgt_grad - gmin) / (gmax - gmin + 1e-12)
+                        tgt_grad_viz = (tgt_grad - gmin) / (gmax - gmin + eps)
                         tgt_grad_viz = (tgt_grad_viz - 0.5) / 0.5
                         data_dict["dm/tgt_grad_grid"] = wandb.Image(prepare_images_for_saving(tgt_grad_viz, resolution=self.resolution))
-
-
-                    
-                    
-                    data_dict = {}  # add this before you touch data_dict
-
-                    # fetch TT tensors if present (already gathered)
-                    tt_pred_x0 = batched.get('tt_pred_x0', None)
 
                     if tt_pred_x0 is not None:
                         tt_pred_grid = prepare_images_for_saving(tt_pred_x0, resolution=self.resolution)
                         data_dict["tt/preview_pred"] = wandb.Image(tt_pred_grid)
 
-                    wandb.log(data_dict, step=self.global_step)
-                    
-                    # -------- visuals & simple stats --------
-                    gen_img_vis = (generated_image * 0.5 + 0.5).clamp(0, 1)
-                    generated_image_brightness = float(gen_img_vis.mean())
-                    generated_image_std        = float(gen_img_vis.std())
-                    generated_image_grid       = prepare_images_for_saving(generated_image, resolution=self.resolution)
+                    # -------- visuals & simple stats (legacy panels guarded) --------
+                    if generated_image is not None:
+                        gen_img_vis = (generated_image * 0.5 + 0.5).clamp(0, 1)
+                        generated_image_brightness = float(gen_img_vis.mean())
+                        generated_image_std        = float(gen_img_vis.std())
+                        generated_image_grid       = prepare_images_for_saving(generated_image, resolution=self.resolution)
+                        data_dict["generated_image"]            = wandb.Image(generated_image_grid)
+                        data_dict["generated_image_brightness"] = generated_image_brightness
+                        data_dict["generated_image_std"]        = generated_image_std
 
-                    # gradient image (normalized per-batch for viz)
-                    eps = 1e-12
-                    gmin, gmax = dmtrain_grad.min(), dmtrain_grad.max()
-                    grad_norm = (dmtrain_grad - gmin) / (gmax - gmin + eps)
-                    grad_norm = (grad_norm - 0.5) / 0.5
-                    gradient  = prepare_images_for_saving(grad_norm, resolution=self.resolution)
+                    # pick a reference for legacy plots (prefer source → target → legacy)
+                    def first_non_none(*xs):
+                        for x in xs:
+                            if x is not None:
+                                return x
+                        return None
 
-                    gradient_brightness = float(dmtrain_grad.mean())
-                    gradient_std        = float(dmtrain_grad.std(dim=[1, 2, 3]).mean())
+                    dm_ref_real = first_non_none(dmtrain_pred_real_image, src_pred, tgt_pred)
+                    dm_ref_grad = first_non_none(dmtrain_grad,            src_grad, tgt_grad)
+                    dm_fake     = dmtrain_pred_fake_image
 
-                    dmtrain_noisy_latents_grid   = prepare_images_for_saving(dmtrain_noisy_latents,   resolution=self.resolution)
-                    dmtrain_pred_real_image_grid = prepare_images_for_saving(dmtrain_pred_real_image, resolution=self.resolution)
-                    dmtrain_pred_fake_image_grid = prepare_images_for_saving(dmtrain_pred_fake_image, resolution=self.resolution)
+                    if dm_ref_grad is not None:
+                        eps = 1e-12
+                        gmin, gmax = dm_ref_grad.min(), dm_ref_grad.max()
+                        grad_norm = (dm_ref_grad - gmin) / (gmax - gmin + eps)
+                        grad_norm = (grad_norm - 0.5) / 0.5
+                        data_dict["gradient"] = wandb.Image(prepare_images_for_saving(grad_norm, resolution=self.resolution))
+                        data_dict["gradient_brightness"] = float(dm_ref_grad.mean())
+                        data_dict["gradient_std"]        = float(dm_ref_grad.std(dim=[1, 2, 3]).mean())
 
-                    dmtrain_pred_real_image_mean = float(((dmtrain_pred_real_image*0.5+0.5).clamp(0,1)).mean())
-                    dmtrain_pred_fake_image_mean = float(((dmtrain_pred_fake_image*0.5+0.5).clamp(0,1)).mean())
-                    dmtrain_pred_real_image_std  = float(((dmtrain_pred_real_image*0.5+0.5).clamp(0,1)).std())
-                    dmtrain_pred_fake_image_std  = float(((dmtrain_pred_fake_image*0.5+0.5).clamp(0,1)).std())
+                    if dmtrain_noisy_latents is not None:
+                        data_dict["dmtrain_noisy_latents_grid"] = wandb.Image(prepare_images_for_saving(dmtrain_noisy_latents, resolution=self.resolution))
 
-                    # difference image (raw brightness, plus normalized viz)
-                    diff = dmtrain_pred_fake_image - dmtrain_pred_real_image
-                    difference_brightness = float(diff.mean())
-                    dmin, dmax = diff.min(), diff.max()
-                    diff_vis = (diff - dmin) / (dmax - dmin + eps)
-                    diff_vis = (diff_vis - 0.5) / 0.5
-                    difference = prepare_images_for_saving(diff_vis, resolution=self.resolution)
+                    if dm_ref_real is not None:
+                        dm_ref_real_grid = prepare_images_for_saving(dm_ref_real, resolution=self.resolution)
+                        data_dict["dmtrain_pred_real_image_grid"] = wandb.Image(dm_ref_real_grid)
+                        data_dict["dmtrain_pred_real_image_mean"] = float(((dm_ref_real*0.5+0.5).clamp(0,1)).mean())
+                        data_dict["dmtrain_pred_real_image_std"]  = float(((dm_ref_real*0.5+0.5).clamp(0,1)).std())
 
-                    dmtrain_timesteps_grid = draw_valued_array(
-                        dmtrain_timesteps.squeeze().detach().cpu().numpy(),
-                        output_dir=self.wandb_folder
-                    )
+                    if dm_fake is not None:
+                        dm_fake_grid = prepare_images_for_saving(dm_fake, resolution=self.resolution)
+                        data_dict["dmtrain_pred_fake_image_grid"] = wandb.Image(dm_fake_grid)
+                        data_dict["dmtrain_pred_fake_image_mean"] = float(((dm_fake*0.5+0.5).clamp(0,1)).mean())
+                        data_dict["dmtrain_pred_fake_image_std"]  = float(((dm_fake*0.5+0.5).clamp(0,1)).std())
 
-                    # per-sample scalar grids you used to log
-                    gradient_scale_grid = draw_valued_array(
-                        dmtrain_grad.abs().mean(dim=[1,2,3]).detach().cpu().numpy(),
-                        output_dir=self.wandb_folder
-                    )
-                    difference_scale_grid = draw_valued_array(
-                        (dmtrain_pred_real_image - dmtrain_pred_fake_image).abs().mean(dim=[1,2,3]).detach().cpu().numpy(),
-                        output_dir=self.wandb_folder
-                    )
+                    if (dm_ref_real is not None) and (dm_fake is not None):
+                        diff = dm_fake - dm_ref_real
+                        eps = 1e-12
+                        dmin, dmax = diff.min(), diff.max()
+                        diff_vis = (diff - dmin) / (dmax - dmin + eps)
+                        diff_vis = (diff_vis - 0.5) / 0.5
+                        data_dict["difference"]            = wandb.Image(prepare_images_for_saving(diff_vis, resolution=self.resolution))
+                        data_dict["difference_brightness"] = float(diff.mean())
+
+                    if dmtrain_timesteps is not None:
+                        dmtrain_timesteps_grid = draw_valued_array(
+                            dmtrain_timesteps.squeeze().detach().cpu().numpy(),
+                            output_dir=self.wandb_folder
+                        )
+                        data_dict["dmtrain_timesteps_grid"] = wandb.Image(dmtrain_timesteps_grid)
+
+                    if dm_ref_grad is not None and dm_ref_real is not None and dm_fake is not None:
+                        gradient_scale_grid = draw_valued_array(
+                            dm_ref_grad.abs().mean(dim=[1,2,3]).detach().cpu().numpy(),
+                            output_dir=self.wandb_folder
+                        )
+                        difference_scale_grid = draw_valued_array(
+                            (dm_ref_real - dm_fake).abs().mean(dim=[1,2,3]).detach().cpu().numpy(),
+                            output_dir=self.wandb_folder
+                        )
+                        data_dict["gradient_scale_grid"]  = wandb.Image(gradient_scale_grid)
+                        data_dict["difference_norm_grid"] = wandb.Image(difference_scale_grid)
 
                     # averaged losses over the accumulation window (fall back to current batch if missing)
-                    loss_dm_mean        = float(scalar_means.get('loss_dm',        loss_dict['loss_dm']))
-                    loss_fake_mean_mean = float(scalar_means.get('loss_fake_mean', loss_dict['loss_fake_mean']))
+                    loss_dm_mean        = float(scalar_means.get('loss_dm',        loss_dict.get('loss_dm', 0.0)))
+                    loss_fake_mean_mean = float(scalar_means.get('loss_fake_mean', loss_dict.get('loss_fake_mean', 0.0)))
                     tt_loss_mean        = float(scalar_means.get('loss_target_teacher', loss_dict.get('loss_target_teacher', 0.0)))
+
+                    data_dict["loss_dm"]        = loss_dm_mean
+                    data_dict["loss_fake_mean"] = loss_fake_mean_mean
+                    data_dict["tt/loss"]        = tt_loss_mean
 
                     # grad norms coming from the training step
                     gen_gn = float(generator_grad_norm.item() if torch.is_tensor(generator_grad_norm) else generator_grad_norm)
                     gui_gn = float(guidance_grad_norm.item() if torch.is_tensor(guidance_grad_norm) else guidance_grad_norm)
-
-                    data_dict = {
-                        "generated_image":                wandb.Image(generated_image_grid),
-                        "generated_image_brightness":     generated_image_brightness,
-                        "generated_image_std":            generated_image_std,
-                        "generator_grad_norm":            gen_gn,
-                        "guidance_grad_norm":             gui_gn,
-
-                        "dmtrain_noisy_latents_grid":     wandb.Image(dmtrain_noisy_latents_grid),
-                        "dmtrain_pred_real_image_grid":   wandb.Image(dmtrain_pred_real_image_grid),
-                        "dmtrain_pred_fake_image_grid":   wandb.Image(dmtrain_pred_fake_image_grid),
-                        "loss_dm":                        loss_dm_mean,
-                        "loss_fake_mean":                 loss_fake_mean_mean,
-                        "tt/loss":                        tt_loss_mean, 
-                        "gradient":                       wandb.Image(gradient),
-                        "difference":                     wandb.Image(difference),
-                        "gradient_scale_grid":            wandb.Image(gradient_scale_grid),
-                        "difference_norm_grid":           wandb.Image(difference_scale_grid),
-                        "dmtrain_timesteps_grid":         wandb.Image(dmtrain_timesteps_grid),
-
-                        "gradient_brightness":            gradient_brightness,
-                        "difference_brightness":          difference_brightness,
-                        "gradient_std":                   gradient_std,
-                        "dmtrain_pred_real_image_mean":   dmtrain_pred_real_image_mean,
-                        "dmtrain_pred_fake_image_mean":   dmtrain_pred_fake_image_mean,
-                        "dmtrain_pred_real_image_std":    dmtrain_pred_real_image_std,
-                        "dmtrain_pred_fake_image_std":    dmtrain_pred_fake_image_std,
-
-                        "effective_batch_size":           int(self.batch_size * max(1, accum) * self.accelerator.num_processes),
-                        "optimizer_step":                 int(self.global_step),
-                    }
+                    data_dict["generator_grad_norm"] = gen_gn
+                    data_dict["guidance_grad_norm"]  = gui_gn
 
                     # ---- also log the fake-train trio (you had these before) ----
-                    faketrain_latents_grid       = prepare_images_for_saving(faketrain_latents,       resolution=self.resolution)
-                    faketrain_noisy_latents_grid = prepare_images_for_saving(faketrain_noisy_latents, resolution=self.resolution)
-                    faketrain_x0_pred_grid       = prepare_images_for_saving(faketrain_x0_pred,       resolution=self.resolution)
-                    data_dict.update({
-                        "faketrain_latents":       wandb.Image(faketrain_latents_grid),
-                        "faketrain_noisy_latents": wandb.Image(faketrain_noisy_latents_grid),
-                        "faketrain_x0_pred":       wandb.Image(faketrain_x0_pred_grid),
-                    })
+                    if faketrain_latents is not None:
+                        data_dict["faketrain_latents"] = wandb.Image(prepare_images_for_saving(faketrain_latents, resolution=self.resolution))
+                    if faketrain_noisy_latents is not None:
+                        data_dict["faketrain_noisy_latents"] = wandb.Image(prepare_images_for_saving(faketrain_noisy_latents, resolution=self.resolution))
+                    if faketrain_x0_pred is not None:
+                        data_dict["faketrain_x0_pred"] = wandb.Image(prepare_images_for_saving(faketrain_x0_pred, resolution=self.resolution))
 
                     # ---- GAN extras (with safe CPU numpy) ----
                     if self.gan_classifier:
@@ -842,37 +838,33 @@ class Trainer:
                         prf = batched.get("pred_realism_on_fake", None)
                         prr = batched.get("pred_realism_on_real", None)
                         if (prf is not None) and (prr is not None):
-                            # 1) true W&B histograms (interactive)
                             prf_np = prf.detach().flatten().float().cpu().numpy()
                             prr_np = prr.detach().flatten().float().cpu().numpy()
-                            data_dict.update({
-                                "hist/pred_realism_on_fake": wandb.Histogram(prf_np, num_bins=50),
-                                "hist/pred_realism_on_real": wandb.Histogram(prr_np, num_bins=50),
-                                "pred_realism_on_fake_mean": float(prf_np.mean()),
-                                "pred_realism_on_real_mean": float(prr_np.mean()),
-                            })
+                            data_dict["hist/pred_realism_on_fake"] = wandb.Histogram(prf_np, num_bins=50)
+                            data_dict["hist/pred_realism_on_real"] = wandb.Histogram(prr_np, num_bins=50)
+                            data_dict["pred_realism_on_fake_mean"] = float(prf_np.mean())
+                            data_dict["pred_realism_on_real_mean"] = float(prr_np.mean())
 
-                            # 2) (optional) keep your rendered histogram image too
                             hist_fake_img = draw_probability_histogram(prf_np)
                             hist_real_img = draw_probability_histogram(prr_np)
-                            data_dict.update({
-                                "hist_img/pred_realism_on_fake": wandb.Image(hist_fake_img),
-                                "hist_img/pred_realism_on_real": wandb.Image(hist_real_img),
-                            })
+                            data_dict["hist_img/pred_realism_on_fake"] = wandb.Image(hist_fake_img)
+                            data_dict["hist_img/pred_realism_on_real"] = wandb.Image(hist_real_img)
 
                         cf = batched.get("critic_fake", None)
                         cr = batched.get("critic_real", None)
                         if (cf is not None) and (cr is not None):
                             cf_sig_np = torch.sigmoid(cf).detach().flatten().cpu().numpy()
                             cr_sig_np = torch.sigmoid(cr).detach().flatten().cpu().numpy()
-                            data_dict.update({
-                                "hist/critic_fake_sigmoid": wandb.Histogram(cf_sig_np, num_bins=50),
-                                "hist/critic_real_sigmoid": wandb.Histogram(cr_sig_np, num_bins=50),
-                            })
+                            data_dict["hist/critic_fake_sigmoid"] = wandb.Histogram(cf_sig_np, num_bins=50)
+                            data_dict["hist/critic_real_sigmoid"] = wandb.Histogram(cr_sig_np, num_bins=50)
                             if 'wgan_gp' in scalar_means:
                                 data_dict['wgan_gp'] = float(scalar_means['wgan_gp'])
 
-                    # Use accelerator.log so only rank 0 logs to WandB
+                    # Effective batch and step
+                    data_dict["effective_batch_size"] = int(self.batch_size * max(1, accum) * self.accelerator.num_processes)
+                    data_dict["optimizer_step"]       = int(self.global_step)
+
+                    # Log once
                     wandb.log(data_dict, step=self.global_step)
 
             # either way, after sync we’re ready for the next window
