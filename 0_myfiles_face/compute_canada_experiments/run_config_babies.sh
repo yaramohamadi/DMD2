@@ -5,7 +5,7 @@
 #SBATCH --gres=gpu:h100:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=20G
-#SBATCH --time=10:00:00
+#SBATCH --time=07:00:00
 #SBATCH --mail-user=yara.mohammadi-bahram.1@ens.etsmtl.ca
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --output=0_myfiles_face/slurm/%x-%j.out
@@ -63,7 +63,7 @@ export GRAD_ACCUM_STEPS="${GRAD_ACCUM_STEPS:-4}"
 export BATCH_SIZE="${BATCH_SIZE:-1}"
 export EVAL_BATCH_SIZE=24
 export NUM_DENOISING_STEP="${NUM_DENOISING_STEP:-3}"
-export TRAIN_ITERS=30000
+export TRAIN_ITERS=20000
 export DATASET_SIZE="${DATASET_SIZE:-10}"  # 10 5 1
 
 export PROJECT_PATH="0_myfiles_face"

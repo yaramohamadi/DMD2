@@ -5,8 +5,8 @@ LOGDIR="0_myfiles_face/slurm"
 mkdir -p "$LOGDIR"
 
 # --------- mode switch: local vs Compute Canada (sbatch) ----------
-MODE="${MODE:-local}"   # set MODE=cc to use sbatch
-export SERVER="${SERVER:-local}"
+MODE="${MODE:-cc}"   # set MODE=cc to use sbatch
+export SERVER="${SERVER:-cc}"
 submit_run () {
   local tag="$1"
 
