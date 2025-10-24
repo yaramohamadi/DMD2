@@ -5,7 +5,8 @@ LOGDIR="0_myfiles_face/slurm"
 mkdir -p "$LOGDIR"
 
 # --------- mode switch: local vs Compute Canada (sbatch) ----------
-MODE="${MODE:-"local"}"   # set MODE=cc to use sbatch
+MODE="${MODE:-cc}"   # set MODE=cc to use sbatch
+export SERVER="${SERVER:-cc}"
 submit_run () {
   local tag="$1"
 
@@ -43,24 +44,18 @@ GAN_CLASSIFIER="$GAN_CLASSIFIER" \
 # ------------------------------------------------------------------
 
 # sweeps
-GEN_CLS_LOSS_WEIGHTS=(0)
-CLS_LOSS_WEIGHTS=(0)
+GEN_CLS_LOSS_WEIGHTS=(0 1e-2 5e-3 1e-3 1e-4)
+CLS_LOSS_WEIGHTS=(0 3e-3 1.5e-3 3e-4 3e-5)
 GEN_LRS=(2e-6)
 DMD_LOSS_WEIGHTS=(1)
-
-# GAN: disabled (child should conditionally add --gan_classifier only if GAN_CLASSIFIER is non-empty)
-export GAN_CLASSIFIER=""
 
 # fixed flags
 export WANDB_PROJECT="METFACES_TARGET_TEACHER_SWEEP"
 
 # Target Teacher switches (match child usage exactly)
-# child passes: --use_source_teacher $USE_SOURCE_TEACHER
-#               --use_target_teacher $USE_TARGET_TEACHER
-#               --train_target_teacher $TRAIN_TARGET_TEACHER   # you said this expects a value now
 export USE_SOURCE_TEACHER=0
 export USE_TARGET_TEACHER=1
-export TRAIN_TARGET_TEACHER=1
+export TRAIN_TARGET_TEACHER=1   # if your child expects a value; else unset/empty and use ${...:+--flag} in child
 
 DATASETS=("metfaces")
 
@@ -82,13 +77,21 @@ for ds in "${DATASETS[@]}"; do
         export BATCH_SIZE=1
         export NUM_DENOISING_STEP=3
 
-        # Let Slurm handle GPU binding; for local you can still set CUDA_VISIBLE_DEVICES inside CHILD if needed
+        # GPU/topology (Slurm can bind; for local, set CUDA_VISIBLE_DEVICES explicitly)
+        export CUDA_VISIBLE_DEVICES=0
         export TRAIN_GPUS=0
-        export TEST_GPUS=1
+        export TEST_GPUS=0
         export NPROC_PER_NODE=1
         export NNODES=1
 
-        # Tag (no reverse flag now). Include TT settings & GAN state.
+        # -------- enable GAN classifier only if either loss weight is non-zero --------
+        if [[ "$glw" == "0" && "$clw" == "0" ]]; then
+          export GAN_CLASSIFIER=""
+        else
+          export GAN_CLASSIFIER="--gan_classifier"
+        fi
+
+        # Tag (no reverse flag). Include TT settings & GAN state.
         tt_tag="src${USE_SOURCE_TEACHER}_tgt${USE_TARGET_TEACHER}_trainTT${TRAIN_TARGET_TEACHER}"
         gan_tag="gan$([[ -n "$GAN_CLASSIFIER" ]] && echo 1 || echo 0)"
         tag="TT_${ds}_DMDW${dmdw}_lr${lr}_clw${clw}_glw${glw}_${tt_tag}_${gan_tag}"
