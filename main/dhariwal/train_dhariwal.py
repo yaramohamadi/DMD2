@@ -630,6 +630,8 @@ class Trainer:
             log_dict["tt/loss"] = tt_out["loss_target_teacher"].detach()
         loss_dict = {**gen_loss_dict, **guid_loss_dict}
 
+        self.log_everything(loss_dict, log_dict, generator_grad_norm, guidance_grad_norm, accum)
+
 
     def train(self):
         accum = self.accelerator.gradient_accumulation_steps
