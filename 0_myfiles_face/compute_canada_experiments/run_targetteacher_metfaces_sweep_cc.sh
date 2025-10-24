@@ -55,7 +55,7 @@ export GAN_CLASSIFIER=""
 # TT cadence knob:
 #   ""  -> update TT only on generator steps (default behavior)
 #   "--tt_match_guidance" -> update TT every optimizer step (same cadence as guidance)
-export TT_MATCH_GUIDANCE="--tt_match_guidance"   # set "" to disable
+export TT_MATCH_GUIDANCE=""   # set "" to disable # --tt_match_guidance
 
 # fixed flags
 export WANDB_PROJECT="METFACES_TARGET_TEACHER_SWEEP"

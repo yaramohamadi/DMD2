@@ -4,8 +4,8 @@ CHILD="0_myfiles_face/compute_canada_experiments/run_config_babies.sh"
 LOGDIR="0_myfiles_face/slurm"
 mkdir -p "$LOGDIR"
 
-MODE="${MODE:-cc}"
-export SERVER="${SERVER:-cc}"
+MODE="${MODE:-local}"
+export SERVER="${SERVER:-local}"
 
 submit_run () {
   local tag="$1"
