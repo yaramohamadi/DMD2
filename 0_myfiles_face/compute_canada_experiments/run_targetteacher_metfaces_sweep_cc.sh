@@ -5,7 +5,12 @@ LOGDIR="0_myfiles_face/slurm"
 mkdir -p "$LOGDIR"
 
 # --------- mode switch: local vs Compute Canada (sbatch) ----------
+<<<<<<< HEAD
 MODE="${MODE:-local}"   # set MODE=cc to use sbatch
+=======
+MODE="${MODE:-cc}"   # set MODE=cc to use sbatch
+export SERVER="${SERVER:-cc}"
+>>>>>>> cfa8059aacedd7080d656bc7e3e39cc9405811fd
 submit_run () {
   local tag="$1"
 
@@ -43,11 +48,12 @@ TT_MATCH_GUIDANCE="$TT_MATCH_GUIDANCE" \
 # ------------------------------------------------------------------
 
 # sweeps
-GEN_CLS_LOSS_WEIGHTS=(0)
-CLS_LOSS_WEIGHTS=(0)
+GEN_CLS_LOSS_WEIGHTS=(0 1e-2 5e-3 1e-3 1e-4)
+CLS_LOSS_WEIGHTS=(0 3e-3 1.5e-3 3e-4 3e-5)
 GEN_LRS=(2e-6)
 DMD_LOSS_WEIGHTS=(1)
 
+<<<<<<< HEAD
 # GAN off unless either cls loss is non-zero (child should use ${GAN_CLASSIFIER-})
 export GAN_CLASSIFIER=""
 
@@ -63,6 +69,15 @@ export WANDB_PROJECT="METFACES_TARGET_TEACHER_SWEEP"
 export USE_SOURCE_TEACHER=0
 export USE_TARGET_TEACHER=1
 export TRAIN_TARGET_TEACHER=1    # if your child expects a value; else make it empty and use ${...:+--train_target_teacher}
+=======
+# fixed flags
+export WANDB_PROJECT="METFACES_TARGET_TEACHER_SWEEP"
+
+# Target Teacher switches (match child usage exactly)
+export USE_SOURCE_TEACHER=0
+export USE_TARGET_TEACHER=1
+export TRAIN_TARGET_TEACHER=1   # if your child expects a value; else unset/empty and use ${...:+--flag} in child
+>>>>>>> cfa8059aacedd7080d656bc7e3e39cc9405811fd
 
 DATASETS=("metfaces")
 
@@ -84,7 +99,7 @@ for ds in "${DATASETS[@]}"; do
         export NUM_DENOISING_STEP=3
 
         export TRAIN_GPUS=0
-        export TEST_GPUS=1
+        export TEST_GPUS=0
         export NPROC_PER_NODE=1
         export NNODES=1
 
