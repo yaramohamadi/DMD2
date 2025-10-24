@@ -98,6 +98,9 @@ class dhariwalGuidance(nn.Module):
         self.train_target_teacher = getattr(args, "train_target_teacher", False)
         self.train_fake_on_real = getattr(args, 'train_fake_on_real', False)
 
+        self.dmd_source_weight = float(getattr(args, "dmd_source_weight", 1.0))
+        self.dmd_target_weight = float(getattr(args, "dmd_target_weight", 1.0))
+
         if self.train_fake_on_real:
             print("Fake-score training: REAL images")
         else:
@@ -248,68 +251,92 @@ class dhariwalGuidance(nn.Module):
         return 0.5 * self.r1_gamma * penalty
 
         
-    def compute_distribution_matching_loss(
-        self, 
-        latents,
-        labels
-    ):
-        original_latents = latents 
-        batch_size = latents.shape[0]
+    def compute_distribution_matching_loss(self, latents, labels):
+        original_latents = latents
+        B = latents.shape[0]
 
         with torch.no_grad():
             timesteps = torch.randint(
-                self.min_step, 
-                min(self.max_step+1, self.num_train_timesteps),
-                [batch_size, 1, 1, 1], 
-                device=latents.device,
-                dtype=torch.long
+                self.min_step, min(self.max_step + 1, self.num_train_timesteps),
+                [B, 1, 1, 1], device=latents.device, dtype=torch.long
             )
-
             noise = torch.randn_like(latents)
-
             timestep_sigma = self.karras_sigmas[timesteps]
-            
-            noisy_latents = latents + timestep_sigma.reshape(-1, 1, 1, 1) * noise
+            noisy_latents = latents + timestep_sigma.reshape(-1,1,1,1) * noise
 
-            if self.use_target_teacher and self.target_unet is not None:
-                print("Using target teacher for DMD")
-                pred_real_image = self.target_unet(noisy_latents, timestep_sigma, labels)  # target teacher with (maybe-null) labels
-            else:
-                print("Using source teacher for DMD")
-                pred_real_image = self.real_unet(noisy_latents, timestep_sigma, None)  # unconditional teacher
-            
-            pred_fake_image = self.fake_unet(noisy_latents, timestep_sigma, labels) # student sees (maybe-null) labels
+            # Student prediction (once)
+            pred_fake_image = self.fake_unet(noisy_latents, timestep_sigma, labels)
 
-            p_real = (latents - pred_real_image) 
-            p_fake = (latents - pred_fake_image) 
+            # Optional teacher predictions
+            pred_src = None
+            pred_tgt = None
+            if self.use_source_teacher:
+                # source teacher is unconditional
+                pred_src = self.real_unet(noisy_latents, timestep_sigma, None)
+            if self.use_target_teacher and (self.target_unet is not None):
+                # target teacher may be conditional (labels can be onehot or None)
+                pred_tgt = self.target_unet(noisy_latents, timestep_sigma, labels)
 
-            weight_factor = torch.abs(p_real).mean(dim=[1, 2, 3], keepdim=True)    
+            # Build per-teacher losses (if enabled)
+            losses = []
+            log_extras = {}
 
-            if self.reverse_dmd:
-                # after (pulls toward target)
-                grad = (p_fake - p_real) / weight_factor
-            else:
-                # before (pulls toward source)
-                grad = (p_real - p_fake) / weight_factor
-                    
-            grad = torch.nan_to_num(grad) 
+            if pred_src is not None and self.dmd_source_weight != 0.0:
+                p_real_s = (latents - pred_src)
+                p_fake_s = (latents - pred_fake_image)
+                w_s      = torch.abs(p_real_s).mean(dim=[1,2,3], keepdim=True)
+                grad_s   = (p_real_s - p_fake_s) / w_s if not self.reverse_dmd else (p_fake_s - p_real_s) / w_s
+                grad_s   = torch.nan_to_num(grad_s)
 
-        # this loss gives the grad as gradient through autodiff, following https://github.com/ashawkey/stable-dreamfusion 
-        loss = 0.5 * F.mse_loss(original_latents, (original_latents-grad).detach(), reduction="mean")         
+                loss_s = 0.5 * F.mse_loss(original_latents, (original_latents - grad_s).detach(), reduction="mean")
+                losses.append(self.dmd_source_weight * loss_s)
 
-        loss_dict = {
-            "loss_dm": loss 
-        }
+                # logging (optional)
+                log_extras["dmtrain_pred_real_image_source"] = pred_src.detach()
+                log_extras["dmtrain_grad_source"]            = grad_s.detach()
 
+            if pred_tgt is not None and self.dmd_target_weight != 0.0:
+                p_real_t = (latents - pred_tgt)
+                p_fake_t = (latents - pred_fake_image)
+                w_t      = torch.abs(p_real_t).mean(dim=[1,2,3], keepdim=True)
+                grad_t   = (p_real_t - p_fake_t) / w_t if not self.reverse_dmd else (p_fake_t - p_real_t) / w_t
+                grad_t   = torch.nan_to_num(grad_t)
+
+                loss_t = 0.5 * F.mse_loss(original_latents, (original_latents - grad_t).detach(), reduction="mean")
+                losses.append(self.dmd_target_weight * loss_t)
+
+                # logging (optional)
+                log_extras["dmtrain_pred_real_image_target"] = pred_tgt.detach()
+                log_extras["dmtrain_grad_target"]            = grad_t.detach()
+
+            # Safety: if neither teacher is active, raise a clear error
+            if len(losses) == 0:
+                raise RuntimeError("DMD requested, but neither source nor target teacher is enabled or both weights are 0.")
+
+            # Combined DMD objective (per-teacher weighted), trainer will still multiply by dmd_loss_weight
+            total_dmd = sum(losses)
+
+        loss_dict = {"loss_dm": total_dmd}
         dm_log_dict = {
             "dmtrain_noisy_latents": noisy_latents.detach(),
-            "dmtrain_pred_real_image": pred_real_image.detach(),
             "dmtrain_pred_fake_image": pred_fake_image.detach(),
-            "dmtrain_grad": grad.detach(),
-            "dmtrain_gradient_norm": torch.norm(grad).item(),
             "dmtrain_timesteps": timesteps.detach(),
         }
+        dm_log_dict.update(log_extras)  # optional extra keys when both teachers active
+
+        # Backward-time conveniences (keep existing keys for compatibility):
+        # If only one teacher was active, also populate the legacy keys to keep your visuals unchanged
+        if "dmtrain_pred_real_image_source" in dm_log_dict and "dmtrain_pred_real_image_target" not in dm_log_dict:
+            dm_log_dict["dmtrain_pred_real_image"] = dm_log_dict["dmtrain_pred_real_image_source"]
+            dm_log_dict["dmtrain_grad"]            = dm_log_dict.get("dmtrain_grad_source")
+        elif "dmtrain_pred_real_image_target" in dm_log_dict and "dmtrain_pred_real_image_source" not in dm_log_dict:
+            dm_log_dict["dmtrain_pred_real_image"] = dm_log_dict["dmtrain_pred_real_image_target"]
+            dm_log_dict["dmtrain_grad"]            = dm_log_dict.get("dmtrain_grad_target")
+        # If both are present, you can choose not to overwrite the legacy keys,
+        # or set them to, e.g., the source teacher for continuity. Here we leave them unset when both present.
+
         return loss_dict, dm_log_dict
+
 
     def compute_loss_fake(
         self,

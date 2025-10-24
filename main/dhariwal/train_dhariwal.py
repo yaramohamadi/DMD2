@@ -354,6 +354,10 @@ class Trainer:
             'critic_fake',
             'critic_real',
             'tt_pred_x0',
+            'dmtrain_pred_real_image_source',
+            'dmtrain_pred_real_image_target',
+            'dmtrain_grad_source',
+            'dmtrain_grad_target',
         ]
 
         for k in tkeys:
@@ -582,8 +586,8 @@ class Trainer:
             # NEW: Target-Teacher update AFTER guidance step
             # Run once per optimizer step, outside the generator accumulate block
             # ==========================================================
-            tt_cadence_hits = self.args.tt_match_guidance or COMPUTE_GENERATOR_GRADIENT
-            if accelerator.sync_gradients and COMPUTE_GENERATOR_GRADIENT and getattr(self, "optimizer_target_teacher", None) is not None:
+            tt_cadence_hits = bool(self.args.tt_match_guidance) or bool(COMPUTE_GENERATOR_GRADIENT)
+            if accelerator.sync_gradients and tt_cadence_hits and getattr(self, "optimizer_target_teacher", None) is not None:
                 gm = self.model.guidance_model
                 inner_gm = gm.module if hasattr(gm, "module") else gm  # unwrap DDP
 
@@ -688,6 +692,35 @@ class Trainer:
                     faketrain_latents       = agg_or_last('faketrain_latents')
                     faketrain_noisy_latents = agg_or_last('faketrain_noisy_latents')
                     faketrain_x0_pred       = agg_or_last('faketrain_x0_pred')
+
+                    src_pred = batched.get('dmtrain_pred_real_image_source', None)
+                    tgt_pred = batched.get('dmtrain_pred_real_image_target', None)
+                    src_grad = batched.get('dmtrain_grad_source', None)
+                    tgt_grad = batched.get('dmtrain_grad_target', None)
+
+                    if src_pred is not None:
+                        src_pred_grid = prepare_images_for_saving(src_pred, resolution=self.resolution)
+                        data_dict["dm/src_pred_grid"] = wandb.Image(src_pred_grid)
+
+                    if tgt_pred is not None:
+                        tgt_pred_grid = prepare_images_for_saving(tgt_pred, resolution=self.resolution)
+                        data_dict["dm/tgt_pred_grid"] = wandb.Image(tgt_pred_grid)
+
+                    if src_grad is not None:
+                        # normalize like your existing gradient viz
+                        eps = 1e-12
+                        gmin, gmax = src_grad.min(), src_grad.max()
+                        src_grad_viz = (src_grad - gmin) / (gmax - gmin + eps)
+                        src_grad_viz = (src_grad_viz - 0.5) / 0.5
+                        data_dict["dm/src_grad_grid"] = wandb.Image(prepare_images_for_saving(src_grad_viz, resolution=self.resolution))
+
+                    if tgt_grad is not None:
+                        gmin, gmax = tgt_grad.min(), tgt_grad.max()
+                        tgt_grad_viz = (tgt_grad - gmin) / (gmax - gmin + 1e-12)
+                        tgt_grad_viz = (tgt_grad_viz - 0.5) / 0.5
+                        data_dict["dm/tgt_grad_grid"] = wandb.Image(prepare_images_for_saving(tgt_grad_viz, resolution=self.resolution))
+
+
                     
                     
                     data_dict = {}  # add this before you touch data_dict
@@ -950,6 +983,10 @@ def parse_args():
         help="If set, update Target Teacher every optimizer step (same cadence as guidance). "
             "If not set, TT updates only on generator steps (gated by dfake_gen_update_ratio)."
     )
+    parser.add_argument("--dmd_source_weight", type=float, default=1.0,
+        help="Weight for DMD w.r.t. SOURCE (frozen) teacher.")
+    parser.add_argument("--dmd_target_weight", type=float, default=1.0,
+        help="Weight for DMD w.r.t. TARGET (trainable) teacher.")
     # -----------------------------------------------------------
 
     args = parser.parse_args()
