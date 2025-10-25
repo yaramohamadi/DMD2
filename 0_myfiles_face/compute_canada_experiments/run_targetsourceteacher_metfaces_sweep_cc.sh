@@ -4,8 +4,8 @@ CHILD="0_myfiles_face/compute_canada_experiments/run_config_babies.sh"
 LOGDIR="0_myfiles_face/slurm"
 mkdir -p "$LOGDIR"
 
-MODE="${MODE:-local}"
-export SERVER="${SERVER:-local}"
+MODE="${MODE:-cc}"
+export SERVER="${SERVER:-cc}"
 
 submit_run () {
   local tag="$1"
@@ -43,14 +43,14 @@ TT_MATCH_GUIDANCE="$TT_MATCH_GUIDANCE" \
 }
 
 # ---------- sweeps ----------
-GEN_CLS_LOSS_WEIGHTS=(0)
-CLS_LOSS_WEIGHTS=(0)
+GEN_CLS_LOSS_WEIGHTS=(15e-3)
+CLS_LOSS_WEIGHTS=(5e-2)
 GEN_LRS=(2e-6)
 DMD_LOSS_WEIGHTS=(1)   # global multiplier
 
 # PAIRED per-teacher weights (same length!)
-SRC_WEIGHTS=(0.5) # 1.0 0.25  0.75 0.9
-TGT_WEIGHTS=(0.5) # 0.0 0.75  0.25 1.0
+SRC_WEIGHTS=(0.5 0.3 0.2 0.1 0.05) # 1.0 0.25  0.75 0.9
+TGT_WEIGHTS=(0.5 0.7 0.8 0.9 0.95) # 0.0 0.75  0.25 1.0
 
 if [[ ${#SRC_WEIGHTS[@]} -ne ${#TGT_WEIGHTS[@]} ]]; then
   echo "[ERROR] SRC_WEIGHTS and TGT_WEIGHTS must have the same length." >&2
@@ -94,7 +94,7 @@ for ds in "${DATASETS[@]}"; do
           export NUM_DENOISING_STEP=3
 
           export TRAIN_GPUS=0
-          export TEST_GPUS=1
+          export TEST_GPUS=0
           export NPROC_PER_NODE=1
           export NNODES=1
 

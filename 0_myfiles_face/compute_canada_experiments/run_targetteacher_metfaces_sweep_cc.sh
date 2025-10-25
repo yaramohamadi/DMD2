@@ -43,9 +43,11 @@ TT_MATCH_GUIDANCE="$TT_MATCH_GUIDANCE" \
 }
 # ------------------------------------------------------------------
 
+
+
 # sweeps
-GEN_CLS_LOSS_WEIGHTS=(0)
-CLS_LOSS_WEIGHTS=(0)
+GEN_CLS_LOSS_WEIGHTS=(15e-3)
+CLS_LOSS_WEIGHTS=(5e-2)
 GEN_LRS=(2e-6)
 DMD_LOSS_WEIGHTS=(1)
 
@@ -55,7 +57,7 @@ export GAN_CLASSIFIER=""
 # TT cadence knob:
 #   ""  -> update TT only on generator steps (default behavior)
 #   "--tt_match_guidance" -> update TT every optimizer step (same cadence as guidance)
-export TT_MATCH_GUIDANCE=""   # set "" to disable # --tt_match_guidance
+export TT_MATCH_GUIDANCE="--tt_match_guidance"   # set "" to disable # --tt_match_guidance
 
 # fixed flags
 export WANDB_PROJECT="METFACES_TARGET_TEACHER_SWEEP"
@@ -85,7 +87,7 @@ for ds in "${DATASETS[@]}"; do
         export NUM_DENOISING_STEP=3
 
         export TRAIN_GPUS=0
-        export TEST_GPUS=1
+        export TEST_GPUS=0
         export NPROC_PER_NODE=1
         export NNODES=1
 
