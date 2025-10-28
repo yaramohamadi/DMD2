@@ -43,14 +43,14 @@ TT_MATCH_GUIDANCE="$TT_MATCH_GUIDANCE" \
 }
 
 # ---------- sweeps ----------
-GEN_CLS_LOSS_WEIGHTS=(15e-3 1e-2)
-CLS_LOSS_WEIGHTS=(5e-2 3e-3)
+GEN_CLS_LOSS_WEIGHTS=(1e-2)
+CLS_LOSS_WEIGHTS=(3e-3)
 GEN_LRS=(2e-6)
 DMD_LOSS_WEIGHTS=(1)   # global multiplier
 
 # PAIRED per-teacher weights (same length!)
-SRC_WEIGHTS=(0.3 0.2 0.1) # 1.0 0.25  0.75 0.9
-TGT_WEIGHTS=(0.7 0.8 0.9) # 0.0 0.75  0.25 1.0
+SRC_WEIGHTS=(0.2) # 1.0 0.25  0.75 0.9
+TGT_WEIGHTS=(0.8) # 0.0 0.75  0.25 1.0
 
 if [[ ${#SRC_WEIGHTS[@]} -ne ${#TGT_WEIGHTS[@]} ]]; then
   echo "[ERROR] SRC_WEIGHTS and TGT_WEIGHTS must have the same length." >&2
@@ -88,7 +88,7 @@ for ds in "${DATASETS[@]}"; do
           export DMD_SOURCE_WEIGHT="$sw"
           export DMD_TARGET_WEIGHT="$tw"
 
-          export GRAD_ACCUM_STEPS=1
+          export GRAD_ACCUM_STEPS=4
           export BATCH_SIZE=1
           export NUM_DENOISING_STEP=3
 

@@ -43,8 +43,8 @@ TT_MATCH_GUIDANCE="$TT_MATCH_GUIDANCE" \
 }
 
 # ---------- sweeps ----------
-GEN_CLS_LOSS_WEIGHTS=(15e-3 1e-2)
-CLS_LOSS_WEIGHTS=(5e-2 3e-3)
+GEN_CLS_LOSS_WEIGHTS=(1e-2)
+CLS_LOSS_WEIGHTS=(3e-3)
 GEN_LRS=(2e-6)
 DMD_LOSS_WEIGHTS=(1)   # global multiplier
 
@@ -58,14 +58,14 @@ if [[ ${#SRC_WEIGHTS[@]} -ne ${#TGT_WEIGHTS[@]} ]]; then
 fi
 
 export TT_MATCH_GUIDANCE=""  # "--tt_match_guidance" to enable
-export WANDB_PROJECT="METFACES_TARGET_TEACHER_SWEEP"
+export WANDB_PROJECT="CAT_TARGET_TEACHER_SWEEP"
 
 # Enable both teachers; TT is trainable
 export USE_SOURCE_TEACHER=1
 export USE_TARGET_TEACHER=1
 export TRAIN_TARGET_TEACHER=1
 
-DATASETS=("metfaces")
+DATASETS=("cat")
 
 fmtw () { echo "$1" | sed 's/\./p/g'; }
 
