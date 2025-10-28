@@ -777,7 +777,6 @@ def evaluate():
                                 write_best_meta(Path(folder), new_best)
                                 print(f"[BEST] New best FID {current_fid:.4f} at iter {model_index}. Saved to: {dst_path}")
                     
-                    args.no_lpips = False
                     if args.no_lpips:
                        intra_lpips = -1.0
                     else:
