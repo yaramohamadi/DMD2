@@ -556,11 +556,6 @@ class Trainer:
                 guidance_loss = guid_loss_dict["loss_fake_mean"]
                 if self.gan_classifier:
                     guidance_loss = guidance_loss + guid_loss_dict["guidance_cls_loss"] * self.cls_loss_weight
-
-                # average over micro-batches when we're accumulating
-                if not accelerator.sync_gradients:
-                    guidance_loss = guidance_loss / accum
-
                 accelerator.backward(guidance_loss)
 
             # ------------- Step G and Guidance (sync edge) -------------
@@ -588,38 +583,31 @@ class Trainer:
                 self.scheduler_guidance.step()
 
             # ==========================================================
-            # Target-Teacher (TT): accumulate every micro-batch; step on sync
+            # NEW: Target-Teacher update AFTER guidance step
+            # Run once per optimizer step, outside the generator accumulate block
             # ==========================================================
             tt_cadence_hits = bool(self.args.tt_match_guidance) or bool(COMPUTE_GENERATOR_GRADIENT)
-            tt_enabled = (getattr(self, "optimizer_target_teacher", None) is not None)
-
-            if tt_enabled and tt_cadence_hits:
+            if accelerator.sync_gradients and tt_cadence_hits and getattr(self, "optimizer_target_teacher", None) is not None:
                 gm = self.model.guidance_model
                 inner_gm = gm.module if hasattr(gm, "module") else gm  # unwrap DDP
 
-                # Compute TT loss on THIS micro-batch (so it accumulates)
+                # Fresh TT forward (optionally use the same generated image, detached)
                 with torch.enable_grad():
-                    maybe_fake = gen_log_dict.get("generated_image", None)
-                    if maybe_fake is not None:
-                        maybe_fake = maybe_fake.detach()  # keep TT grads local to TT params
-
                     tt_out = inner_gm.compute_loss_target_teacher(
                         real_image=real_train_dict["real_image"],
                         real_label=real_train_dict["real_label"],
-                        maybe_fake_image=maybe_fake,
+                        maybe_fake_image=(gen_log_dict.get("generated_image", None).detach()
+                                        if ('gen_log_dict' in locals() and gen_log_dict.get("generated_image", None) is not None)
+                                        else None),
                         train_on_real=getattr(self.args, "target_teacher_train_on_real", True),
                         train_on_fake=getattr(self.args, "target_teacher_train_on_fake", False),
                     )
                     tt_loss = tt_out["loss_target_teacher"] * getattr(self.args, "target_teacher_loss_weight", 1.0)
 
-                    # Average across micro-batches when accumulating
-                    if not accelerator.sync_gradients:
-                        tt_loss = tt_loss / self.accelerator.gradient_accumulation_steps
-
+                # This backward is the ONLY one happening now; guidance already reduced
                 accelerator.backward(tt_loss)
 
-            # ---- step TT ONLY once per accumulation window ----
-            if accelerator.sync_gradients and tt_enabled and tt_cadence_hits:
+                # clip only TT params and step TT optimizer
                 tt_params_for_clip = [
                     p for n, p in self.model.guidance_model.named_parameters()
                     if _strip_module_prefix_name(n).startswith("target_unet.") and p.grad is not None
