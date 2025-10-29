@@ -87,59 +87,57 @@ test_stream_conditional() {
     ${USE_BF16:-}
 }
 
-TEST_PID=""
-TEST_PGID=""
 
-teardown() {
-  local code=$?
-  # prevent re-entry
-  trap - EXIT INT TERM ERR
 
+
+
+# -----------------------
+# Orchestration (fixed)
+# -----------------------
+
+start_streaming_test() {
+  export -f test_stream_conditional
+  # Start in a new session so the PGID corresponds to the leader we can kill
+  ( setsid bash -c 'test_stream_conditional' ) &
+  TEST_PID=$!
+  TEST_PGID="$(ps -o pgid= "$TEST_PID" | tr -d ' ')" || true
+  echo "[orchestrator] started streaming test (pid=$TEST_PID, pgid=${TEST_PGID:-?})"
+}
+
+stop_streaming_test() {
   if [[ -n "${TEST_PID:-}" ]] && kill -0 "$TEST_PID" 2>/dev/null; then
-    # determine process group and kill the entire group so children die too
-    if [[ -z "${TEST_PGID:-}" ]]; then
-      TEST_PGID="$(ps -o pgid= "$TEST_PID" | tr -d ' ')"
-    fi
-    echo "[orchestrator] stopping test (pid=$TEST_PID, pgid=${TEST_PGID:-?})"
+    echo "[orchestrator] stopping streaming test (pid=$TEST_PID, pgid=${TEST_PGID:-?})"
     if [[ -n "${TEST_PGID:-}" ]]; then
       kill -TERM "-$TEST_PGID" 2>/dev/null || true
     else
       kill -TERM "$TEST_PID" 2>/dev/null || true
     fi
-    # wait up to 10s, then force kill if still alive
     for _ in {1..10}; do
       kill -0 "$TEST_PID" 2>/dev/null || break
       sleep 1
     done
     if kill -0 "$TEST_PID" 2>/dev/null; then
-      if [[ -n "${TEST_PGID:-}" ]]; then
-        kill -KILL "-$TEST_PGID" 2>/dev/null || true
-      else
-        kill -KILL "$TEST_PID" 2>/dev/null || true
-      fi
+      [[ -n "${TEST_PGID:-}" ]] && kill -KILL "-$TEST_PGID" 2>/dev/null || kill -KILL "$TEST_PID" 2>/dev/null || true
     fi
-    # reap
     wait "$TEST_PID" 2>/dev/null || true
+    TEST_PID=""; TEST_PGID=""
   fi
-
-  exit "$code"
 }
 
-trap teardown EXIT INT TERM ERR
+trap 'stop_streaming_test' EXIT INT TERM ERR
 
-# -----------------------
-# Orchestration
-# -----------------------
+# 1) start background streaming eval
+start_streaming_test
 
-# Start test in its own process group so children share the PGID
-
-export -f test_stream_conditional
-( setsid bash -c 'test_stream_conditional' ) &
-TEST_PID=$!
-TEST_PGID="$(ps -o pgid= "$TEST_PID" | tr -d ' ')" || true
-
-# Run training in foreground; on exit (success or error), EXIT trap runs teardown()
+# 2) run training (foreground)
 train
-# end of script — teardown() will run via the EXIT trap with train’s exit code
+train_rc=$?
 
+# 3) stop background streaming eval now (don’t wait for script exit)
+stop_streaming_test
+
+# 4) optional: one final eval after training completes
+echo "[test] Running final evaluation after training..."
 test_stream_conditional
+
+exit "$train_rc"

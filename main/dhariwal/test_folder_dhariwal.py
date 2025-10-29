@@ -30,11 +30,6 @@ from typing import Optional
 
 torch.set_num_threads(int(os.getenv("OMP_NUM_THREADS", "1")))
 
-def make_eval_generator(device, seed:int):
-    g = torch.Generator(device=device)
-    g.manual_seed(int(seed))
-    return g
-
 
 # Helpers for saving best checkpoints ---------------------------------
 BEST_META_NAME = "best_ckpt.json"          # metadata file
@@ -245,21 +240,17 @@ def _make_sigma_schedule(sigma_start: torch.Tensor, K: int, sigma_end: float) ->
     logs = t0.unsqueeze(0) * (1 - grid) + tK.unsqueeze(0) * grid                         # [K,B]
     return torch.exp(logs)                                                                # [K,B]
 
-def ddim_step(x, x0_hat, si, s_next, eta=0.0, rng=None):
-    # x, x0_hat: [B,3,H,W], si/s_next: [B] or broadcastable
-    eps_hat = (x - x0_hat) / si.view(-1,1,1,1)
-    if eta and eta > 0:
-        z = torch.randn_like(x, generator=rng)
-        eps_next = (1 - eta**2) ** 0.5 * eps_hat + eta * z
-    else:
-        eps_next = eps_hat
-    return x0_hat + s_next.view(-1,1,1,1) * eps_next
+def _re_noise(x0: torch.Tensor, sigma_next: torch.Tensor) -> torch.Tensor:
+    """EDM corruption x = x0 + sigma * eps (same as in your training model)."""
+    if sigma_next.ndim == 1:
+        sigma_next = sigma_next.view(-1, 1, 1, 1)
+    return x0 + sigma_next * torch.randn_like(x0)
 
 
 
 
 @torch.no_grad()
-def sample(accelerator, current_model, args, model_index, rng=None):
+def sample(accelerator, current_model, args, model_index):
     """
     Generate exactly args.total_eval_samples images across all processes,
     with a global tqdm progress bar (on rank 0). Returns NHWC uint8 tensor on CPU.
@@ -269,18 +260,13 @@ def sample(accelerator, current_model, args, model_index, rng=None):
     bs    = args.eval_batch_size
     total = args.total_eval_samples
 
-    g = rng or torch.Generator(device=dev).manual_seed(int(args.seed))
-
-    rank0_chunks = []
-    if accelerator.is_main_process:
-        pbar = tqdm(total=total, desc=f"Sampling {total} @ {args.resolution}", ncols=100)
-
     # How many synchronized steps do we need if every rank makes `bs` images each step?
     steps = math.ceil(total / float(bs * world))
 
     # Make the model fast for inference
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
+    torch.backends.cudnn.benchmark = True
 
     Lm = args.label_dim
     current_model.eval()
@@ -289,11 +275,12 @@ def sample(accelerator, current_model, args, model_index, rng=None):
     def make_labels(B, step_offset=0):
         if Lm == 0 or args.label_mode == "uncond":
             return None
+        # number of real classes (exclude NULL if present)
         K_real   = Lm - 1 if args.has_null else Lm
         null_idx = Lm - 1 if args.has_null else None
+        # choose class indices
         if args.label_mode == "uniform":
-            # use the SAME generator
-            idx = torch.randint(0, K_real, (B,), device=dev, generator=g)
+            idx = torch.randint(0, K_real, (B,), device=dev)
         elif args.label_mode == "const":
             idx = torch.full((B,), int(args.label_index), device=dev)
         elif args.label_mode == "cycle":
@@ -305,35 +292,48 @@ def sample(accelerator, current_model, args, model_index, rng=None):
             idx = torch.full((B,), null_idx, device=dev)
         else:
             raise ValueError(f"Unknown label_mode: {args.label_mode}")
+        # to one-hot
         y = torch.zeros(B, Lm, device=dev, dtype=torch.float32)
         y.scatter_(1, idx.view(-1,1), 1.0)
         return y
 
-    for step_idx in range(steps):
+    # only rank 0 collects into CPU memory
+    rank0_chunks = []
+    if accelerator.is_main_process:
+        pbar = tqdm(total=total, desc=f"Sampling {total} @ {args.resolution}", ncols=100)
+    
+    # Supporting both 1 step and multi-step
+    for _ in range(steps):
         cur = bs
 
         if (not args.denoising) or (args.num_denoising_step <= 1):
-            # 1-step path (deterministic with fixed noise + fixed seed)
+            # -------- one-step path (existing behavior) --------
             t = torch.full((cur,), args.conditioning_sigma, device=dev)
-            noise = torch.randn(cur, 3, args.resolution, args.resolution, device=dev, generator=g)
-            imgs = current_model(noise * args.conditioning_sigma, t, make_labels(cur, step_offset=step_idx))
+            noise = torch.randn(cur, 3, args.resolution, args.resolution, device=dev)
+            imgs = current_model(noise * args.conditioning_sigma, t, make_labels(cur, step_offset=_))  # [-1,1], NCHW
         else:
-            # K-step DDIM path (η=0 by default)
+            # -------- few-step (K-step) unrolled path --------
             K = int(max(1, args.num_denoising_step))
+            # start at sigma0 = conditioning_sigma (per-sample)
             sigma0 = torch.full((cur,), args.conditioning_sigma, device=dev)
-            x = torch.randn(cur, 3, args.resolution, args.resolution, device=dev, generator=g) * sigma0.view(-1,1,1,1)
-            y = make_labels(cur, step_offset=step_idx)
+            # initial x is pure noise at sigma0
+            x = torch.randn(cur, 3, args.resolution, args.resolution, device=dev) * sigma0.view(-1,1,1,1)
+            y = make_labels(cur, step_offset=_)
 
+            # build decreasing schedule [K, B] from sigma0 -> denoising_sigma_end
             sigmas = _make_sigma_schedule(sigma0, K, args.denoising_sigma_end)
+
+            last_x0 = None
             for i in range(K):
-                si = sigmas[i]
-                x0_hat = current_model(x, si, y)
+                si = sigmas[i]                     # [B]
+                # predict x0 at this sigma (your Dhariwal adapter returns x0)
+
+                x0_hat = current_model(x, si, y)   # [-1,1], NCHW
+                last_x0 = x0_hat
                 if i + 1 < K:
-                    s_next = sigmas[i + 1]
-                    x = ddim_step(x, x0_hat, si, s_next, eta=0.0, rng=g)
-                else:
-                    x = x0_hat
-            imgs = x
+                    s_next = sigmas[i + 1]         # [B]
+                    x = _re_noise(x0_hat, s_next)  # re-noise back up to next sigma
+            imgs = last_x0
 
         imgs_u8 = ((imgs + 1.0) * 127.5).clamp(0, 255).to(torch.uint8)     # NCHW
         imgs_u8 = imgs_u8.permute(0, 2, 3, 1).contiguous()                  # NHWC
@@ -369,11 +369,10 @@ def sample(accelerator, current_model, args, model_index, rng=None):
     accelerator.wait_for_everyone()
     return all_images_tensor
 
- 
-@torch.no_grad()  
-def render_per_class_grid(accelerator, current_model, args, model_index, n_per_class=10, rng=None):
+
+@torch.no_grad()
+def render_per_class_grid(accelerator, current_model, args, model_index, n_per_class=10):
     dev = accelerator.device
-    g = rng or torch.Generator(device=dev).manual_seed(int(args.seed))
     Lm = args.label_dim
     if Lm == 0:
         return None
@@ -386,13 +385,13 @@ def render_per_class_grid(accelerator, current_model, args, model_index, n_per_c
 
     # --- FIX: pre-sample fixed noise/timesteps ONCE ---
     t_fixed = torch.full((n_per_class,), args.conditioning_sigma, device=dev)
-    z_fixed = torch.randn(n_per_class, 3, H, W, device=dev, generator=g) * args.conditioning_sigma
+    z_fixed = torch.randn(n_per_class, 3, H, W, device=dev) * args.conditioning_sigma
 
     use_k = (args.denoising and int(args.num_denoising_step) > 1)
     if use_k:
         K = int(max(1, args.num_denoising_step))
         sigma0_fixed = t_fixed  # matches your code’s usage
-        x_fixed = torch.randn(n_per_class, 3, H, W, device=dev, generator=g) * sigma0_fixed.view(-1,1,1,1)
+        x_fixed = torch.randn(n_per_class, 3, H, W, device=dev) * sigma0_fixed.view(-1,1,1,1)
         sigmas_fixed = _make_sigma_schedule(sigma0_fixed, K, args.denoising_sigma_end)
 
     def _row_for_class(c_idx: int) -> torch.Tensor:
@@ -401,7 +400,7 @@ def render_per_class_grid(accelerator, current_model, args, model_index, n_per_c
 
         if not use_k:
             # reuse SAME z/t for all classes
-            x = current_model(z_fixed, t_fixed, y)
+            x = current_model(z_fixed, t_fixed, y)  # [-1,1]
         else:
             # start from SAME initial noise for all classes; clone to avoid in-place mutation
             x = x_fixed.clone()
@@ -412,7 +411,7 @@ def render_per_class_grid(accelerator, current_model, args, model_index, n_per_c
                 last_x0 = x0_hat
                 if i + 1 < K:
                     s_next = sigmas_fixed[i + 1]
-                    x = ddim_step(x, x0_hat, si, s_next, eta=0.0, rng=g)
+                    x = _re_noise(x0_hat, s_next)
             x = last_x0
 
         row_u8 = ((x + 1.0) * 127.5).clamp(0, 255).to(torch.uint8).permute(0,2,3,1).contiguous()
@@ -498,14 +497,12 @@ def evaluate():
     parser.add_argument("--denoising_sigma_end", type=float, default=0.5,
                         help="Terminal sigma for the unrolled schedule.")
     parser.add_argument("--use_bf16", action="store_true")
+    
+
 
     args = parser.parse_args()
     if args.label_mode is None:
         args.label_mode = "uncond" if args.label_dim == 0 else "uniform"
-
-    set_seed(int(args.seed))  # seeds torch, numpy, python.random on all ranks
-    torch.backends.cudnn.benchmark = False
-    torch.backends.cudnn.deterministic = True
 
     folder = args.folder
     overall_stats = {}
@@ -578,17 +575,14 @@ def evaluate():
             
             # Per-class panel (10 images per class)
             print("Rendering per class grid...")
-            panel_rng  = make_eval_generator(accelerator.device, seed=args.seed + 0)
-            sample_rng = make_eval_generator(accelerator.device, seed=args.seed + 1)
-
-            panel = render_per_class_grid(accelerator, generator, args, model_index, n_per_class=10, rng=panel_rng)
+            panel = render_per_class_grid(accelerator, generator, args, model_index, n_per_class=10)
 
             if panel is not None:
                 wandb.log({
                     "panel/per_class": wandb.Image(panel),
             })
 
-            all_images_tensor = sample(accelerator, generator, args, model_index, rng=sample_rng)
+            all_images_tensor = sample(accelerator, generator, args, model_index)
 
             # TMP TODO: save numpy for inspection
             # tmp_npy = os.path.join(folder, f"_tmp_imgs_{model_index:06d}.npy")
@@ -606,10 +600,10 @@ def evaluate():
 
             # (bugfix) ensure f-string here:
             n = all_images_tensor.size(0)
-            g2 = int(np.floor(np.sqrt(min(100, n))))
-            g2 = max(1, g2)
-            grid = all_images_tensor[:g2*g2].numpy().reshape(g2, g2, args.resolution, args.resolution, 3)
-            grid = np.swapaxes(grid, 1, 2).reshape(g2*args.resolution, g2*args.resolution, 3)
+            g = int(np.floor(np.sqrt(min(100, n))))
+            g = max(1, g)
+            grid = all_images_tensor[:g*g].numpy().reshape(g, g, args.resolution, args.resolution, 3)
+            grid = np.swapaxes(grid, 1, 2).reshape(g*args.resolution, g*args.resolution, 3)
             grid_path = f"grid_{model_index:06d}.png"
             Image.fromarray(np.ascontiguousarray(grid)).save(grid_path)
 
@@ -698,17 +692,14 @@ def evaluate():
 #               
                 # Per-class panel (10 images per class)
                 print("Rendering per class grid...")
-                panel_rng  = make_eval_generator(accelerator.device, seed=args.seed + 0)
-                sample_rng = make_eval_generator(accelerator.device, seed=args.seed + 1)
-
-                panel = render_per_class_grid(accelerator, generator, args, model_index, n_per_class=10, rng=panel_rng)
+                panel = render_per_class_grid(accelerator, generator, args, model_index, n_per_class=10)
 
                 if panel is not None:
                     wandb.log({
                         "panel/per_class": wandb.Image(panel),
                     })
                     
-                all_images_tensor = sample(accelerator, generator, args, model_index, rng=sample_rng)
+                all_images_tensor = sample(accelerator, generator, args, model_index)
 
                 #TMP TODO: save numpy for inspection
                 # tmp_npy = os.path.join(folder, f"_tmp_imgs_{model_index:06d}.npy")
