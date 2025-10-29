@@ -4,7 +4,7 @@ CHILD="0_myfiles_face/compute_canada_experiments/run_config_babies.sh"
 LOGDIR="0_myfiles_face/slurm"
 mkdir -p "$LOGDIR"
 
-MODE="${MODE:-cc}"
+MODE="${MODE:-local}"
 export SERVER="${SERVER:-cc}"
 
 submit_run () {
@@ -35,6 +35,8 @@ USE_SOURCE_TEACHER="$USE_SOURCE_TEACHER",\
 USE_TARGET_TEACHER="$USE_TARGET_TEACHER",\
 TRAIN_TARGET_TEACHER="$TRAIN_TARGET_TEACHER",\
 GAN_CLASSIFIER="$GAN_CLASSIFIER",\
+CHECKPOINT_PATH="$CHECKPOINT_PATH",\
+TRAIN_ITERS="$TRAIN_ITERS",\
 TT_MATCH_GUIDANCE="$TT_MATCH_GUIDANCE" \
       "$CHILD"
   else
@@ -51,6 +53,14 @@ DMD_LOSS_WEIGHTS=(1)   # global multiplier
 # PAIRED per-teacher weights (same length!)
 SRC_WEIGHTS=(0.3 0.2 0.1) # 1.0 0.25  0.75 0.9
 TGT_WEIGHTS=(0.7 0.8 0.9) # 0.0 0.75  0.25 1.0
+
+
+CHECKPOINT_PATHS=(
+  "0_myfiles_face/checkpoint_path/cat_lr2e-6_bs1_dn3__DMD1_GClsw1e-2__TT_cat_lr2e-6_DMD1_SW0p3_TW0p7_clw3e-3_glw1e-2_src1_tgt1_trainTT1_tt_gen_gan1/checkpoint_model_030000"
+  "0_myfiles_face/checkpoint_path/cat_lr2e-6_bs1_dn3__DMD1_GClsw1e-2__TT_cat_lr2e-6_DMD1_SW0p2_TW0p8_clw3e-3_glw1e-2_src1_tgt1_trainTT1_tt_gen_gan1/checkpoint_model_029700"
+  "0_myfiles_face/checkpoint_path/cat_lr2e-6_bs1_dn3__DMD1_GClsw1e-2__TT_cat_lr2e-6_DMD1_SW0p1_TW0p9_clw3e-3_glw1e-2_src1_tgt1_trainTT1_tt_gen_gan1/checkpoint_model_030000"
+)
+export TRAIN_ITERS=600000
 
 if [[ ${#SRC_WEIGHTS[@]} -ne ${#TGT_WEIGHTS[@]} ]]; then
   echo "[ERROR] SRC_WEIGHTS and TGT_WEIGHTS must have the same length." >&2
@@ -74,12 +84,15 @@ for ds in "${DATASETS[@]}"; do
     for i in "${!GEN_CLS_LOSS_WEIGHTS[@]}"; do
       glw="${GEN_CLS_LOSS_WEIGHTS[$i]}"
       clw="${CLS_LOSS_WEIGHTS[$i]}"
+      
 
       for dmdw in "${DMD_LOSS_WEIGHTS[@]}"; do
         for j in "${!SRC_WEIGHTS[@]}"; do
           sw="${SRC_WEIGHTS[$j]}"
           tw="${TGT_WEIGHTS[$j]}"
+          cp="${CHECKPOINT_PATHS[$j]}"
 
+          export CHECKPOINT_PATH="$cp"
           export DATASET_NAME="$ds"
           export GEN_LR="$lr"
           export GEN_CLS_LOSS_WEIGHT="$glw"
