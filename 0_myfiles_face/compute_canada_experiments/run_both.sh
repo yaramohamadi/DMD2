@@ -55,8 +55,7 @@ train() {
       --train_target_teacher "$TRAIN_TARGET_TEACHER" \
       ${TT_MATCH_GUIDANCE-} \
       --dmd_source_weight "$DMD_SOURCE_WEIGHT" \
-      --dmd_target_weight "$DMD_TARGET_WEIGHT" \
-      --checkpoint_path "$CHECKPOINT_PATH"
+      --dmd_target_weight "$DMD_TARGET_WEIGHT"
 }
 
 # -----------------------

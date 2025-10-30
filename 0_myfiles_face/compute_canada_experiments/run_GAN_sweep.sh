@@ -4,7 +4,7 @@ CHILD="0_myfiles_face/compute_canada_experiments/run_config_babies.sh"
 SLURM_LOG_DIR="0_myfiles_face/slurm"
 mkdir -p "$SLURM_LOG_DIR"
 
-LOSSES=("hinge")  #  "wgan"
+LOSSES=("hinge" "wgan" "LSGAN" "BCE")  #  "wgan"
 
 export NO_LPIPS="--no_lpips"
 

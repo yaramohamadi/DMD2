@@ -4,7 +4,7 @@ CHILD="0_myfiles_face/compute_canada_experiments/run_config_babies.sh"
 LOGDIR="0_myfiles_face/slurm"
 mkdir -p "$LOGDIR"
 
-MODE="${MODE:-local}"
+MODE="${MODE:-cc}"
 export SERVER="${SERVER:-cc}"
 
 submit_run () {
@@ -35,7 +35,6 @@ USE_SOURCE_TEACHER="$USE_SOURCE_TEACHER",\
 USE_TARGET_TEACHER="$USE_TARGET_TEACHER",\
 TRAIN_TARGET_TEACHER="$TRAIN_TARGET_TEACHER",\
 GAN_CLASSIFIER="$GAN_CLASSIFIER",\
-TRAIN_ITERS="$TRAIN_ITERS",\
 TT_MATCH_GUIDANCE="$TT_MATCH_GUIDANCE" \
       "$CHILD"
   else
@@ -50,10 +49,8 @@ GEN_LRS=(2e-6)
 DMD_LOSS_WEIGHTS=(1)   # global multiplier
 
 # PAIRED per-teacher weights (same length!)
-SRC_WEIGHTS=(0.3 0.2 0.1) # 1.0 0.25  0.75 0.9
-TGT_WEIGHTS=(0.7 0.8 0.9) # 0.0 0.75  0.25 1.0
-
-export TRAIN_ITERS=600000
+SRC_WEIGHTS=(0 0.25 0.5 0.75 1) # 1.0 0.25  0.75 0.9
+TGT_WEIGHTS=(1 0.75 0.5 0.25 0) # 0.0 0.75  0.25 1.0
 
 if [[ ${#SRC_WEIGHTS[@]} -ne ${#TGT_WEIGHTS[@]} ]]; then
   echo "[ERROR] SRC_WEIGHTS and TGT_WEIGHTS must have the same length." >&2
@@ -61,14 +58,14 @@ if [[ ${#SRC_WEIGHTS[@]} -ne ${#TGT_WEIGHTS[@]} ]]; then
 fi
 
 export TT_MATCH_GUIDANCE=""  # "--tt_match_guidance" to enable
-export WANDB_PROJECT="CAT_TARGET_TEACHER_SWEEP"
+export WANDB_PROJECT="SWEEP_sunglasses_SRC_TGT"
 
 # Enable both teachers; TT is trainable
 export USE_SOURCE_TEACHER=1
 export USE_TARGET_TEACHER=1
 export TRAIN_TARGET_TEACHER=1
 
-DATASETS=("cat")
+DATASETS=("sunglasses")
 
 fmtw () { echo "$1" | sed 's/\./p/g'; }
 
@@ -77,7 +74,6 @@ for ds in "${DATASETS[@]}"; do
     for i in "${!GEN_CLS_LOSS_WEIGHTS[@]}"; do
       glw="${GEN_CLS_LOSS_WEIGHTS[$i]}"
       clw="${CLS_LOSS_WEIGHTS[$i]}"
-      
 
       for dmdw in "${DMD_LOSS_WEIGHTS[@]}"; do
         for j in "${!SRC_WEIGHTS[@]}"; do
