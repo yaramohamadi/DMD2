@@ -982,6 +982,10 @@ def parse_args():
     # -----------------------------------------------------------
 
     args = parser.parse_args()
+
+    if args.checkpoint_path is "":
+        print("No checkpoint path specified, training from scratch.")
+        args.checkpoint_path = None
     env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
     if env_local_rank != -1 and env_local_rank != args.local_rank:
         args.local_rank = env_local_rank

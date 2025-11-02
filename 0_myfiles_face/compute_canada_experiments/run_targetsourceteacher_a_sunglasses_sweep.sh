@@ -49,8 +49,8 @@ GEN_LRS=(2e-6)
 DMD_LOSS_WEIGHTS=(1)   # global multiplier
 
 # PAIRED per-teacher weights (same length!)
-SRC_WEIGHTS=(1.0 0.5 0.75) # 1.0 0.25  0.75 0.9
-TGT_WEIGHTS=(0.0 0.5 0.25) # 0.0 0.75  0.25 1.0
+SRC_WEIGHTS=(0 0.25 0.5 0.75 1) # 1.0 0.25  0.75 0.9
+TGT_WEIGHTS=(1 0.75 0.5 0.25 0) # 0.0 0.75  0.25 1.0
 
 if [[ ${#SRC_WEIGHTS[@]} -ne ${#TGT_WEIGHTS[@]} ]]; then
   echo "[ERROR] SRC_WEIGHTS and TGT_WEIGHTS must have the same length." >&2
@@ -58,14 +58,14 @@ if [[ ${#SRC_WEIGHTS[@]} -ne ${#TGT_WEIGHTS[@]} ]]; then
 fi
 
 export TT_MATCH_GUIDANCE=""  # "--tt_match_guidance" to enable
-export WANDB_PROJECT="SWEEP_METFACES_SRC_TGT"
+export WANDB_PROJECT="SWEEP_sunglasses_SRC_TGT"
 
 # Enable both teachers; TT is trainable
 export USE_SOURCE_TEACHER=1
 export USE_TARGET_TEACHER=1
 export TRAIN_TARGET_TEACHER=1
 
-DATASETS=("metfaces")
+DATASETS=("sunglasses")
 
 fmtw () { echo "$1" | sed 's/\./p/g'; }
 
@@ -92,7 +92,6 @@ for ds in "${DATASETS[@]}"; do
           export BATCH_SIZE=1
           export NUM_DENOISING_STEP=3
 
-          export CUDA_VISIBLE_DEVICES=0
           export TRAIN_GPUS=0
           export TEST_GPUS=0
           export NPROC_PER_NODE=1

@@ -54,7 +54,7 @@ fi
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1}" # 0,1,2,3
 export TRAIN_GPUS="${TRAIN_GPUS:-0,1}" # 
 export TEST_GPUS="${TEST_GPUS:-1}" #3
-export NPROC_PER_NODE="${NPROC_PER_NODE:-2}" #4
+export NPROC_PER_NODE="${NPROC_PER_NODE:-1}" #4
 export NNODES="${NNODES:-1}"
 export MASTER_ADDR=127.0.0.1
 export MASTER_PORT=$(shuf -i 20000-65000 -n 1)
@@ -63,12 +63,12 @@ export GRAD_ACCUM_STEPS="${GRAD_ACCUM_STEPS:-4}"
 export BATCH_SIZE="${BATCH_SIZE:-1}"
 export EVAL_BATCH_SIZE=10
 export NUM_DENOISING_STEP="${NUM_DENOISING_STEP:-3}"
-export TRAIN_ITERS=30000
+export TRAIN_ITERS="${TRAIN_ITERS:-30000}"
 export DATASET_SIZE="${DATASET_SIZE:-10}"  # 10 5 1
 
 export PROJECT_PATH="0_myfiles_face"
 export DATASET_NAME="${DATASET_NAME:-"babies"}"
-export CHECKPOINT_INIT="$PROJECT_PATH/checkpoints/ffhq.pt"
+export CHECKPOINT_INIT="${CHECKPOINT_INIT:-"$PROJECT_PATH/checkpoints/ffhq.pt"}"
 export REAL_IMAGE_PATH="$PROJECT_PATH/datasets/targets/${DATASET_SIZE}_${DATASET_NAME}_lmdb"
 
 export WANDB_ENTITY="yara-mohammadi-bahram-1-ecole-superieure-de-technologie"
@@ -119,9 +119,9 @@ export GEN_CLS_LOSS_WEIGHT="${GEN_CLS_LOSS_WEIGHT:-15e-3}" #-3e-3
 export DMD_LOSS_WEIGHT="${DMD_LOSS_WEIGHT:-1}"
 export DIFFUSION_GAN_MAX_TIMESTEP=1000
 
-export LOG_ITERS=100
-export WANDB_ITERS=100
-export MAX_CHECKPOINT=100
+export LOG_ITERS=500
+export WANDB_ITERS=500
+export MAX_CHECKPOINT=500
 
 export FID_NPZ_ROOT="$PROJECT_PATH/datasets/fid_npz"
 export FEWSHOT_DATASET="$PROJECT_PATH/datasets/targets/${DATASET_SIZE}_${DATASET_NAME}/0"
@@ -158,7 +158,8 @@ export TRAIN_TARGET_TEACHER="${TRAIN_TARGET_TEACHER:-1.0}"
 export GAN_CLASSIFIER="${GAN_CLASSIFIER-"--gan_classifier"}" # --gan_classifier
 
 export EXPERIMENT_NAME="${DATASET_NAME}_lr${GEN_LR}_bs${BATCH_SIZE}_dn${NUM_DENOISING_STEP}_${TRAIN_FAKE_ON_REAL}_DMD${DMD_LOSS_WEIGHT}_GClsw${GEN_CLS_LOSS_WEIGHT}_${EXTRA_TAG}"
-export OUTPUT_PATH="0_myfiles_face/checkpoint_path/$EXPERIMENT_NAME"
+export OUTPUT_PATH="$PROJECT_PATH/checkpoint_path/$EXPERIMENT_NAME"
+#"$SCRATCH/$EXPERIMENT_NAME"
 # "$PROJECT_PATH/checkpoint_path/$EXPERIMENT_NAME"
 export WANDB_NAME="$EXPERIMENT_NAME"
 

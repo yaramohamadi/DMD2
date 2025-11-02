@@ -15,6 +15,7 @@ submit_run () {
       --output="$LOGDIR/%x-%j.out" \
       --export=ALL,\
 DATASET_NAME="$DATASET_NAME",\
+DATASET_SIZE="$DATASET_SIZE",\
 GEN_LR="$GEN_LR",\
 GEN_CLS_LOSS_WEIGHT="$GEN_CLS_LOSS_WEIGHT",\
 CLS_LOSS_WEIGHT="$CLS_LOSS_WEIGHT",\
@@ -49,8 +50,8 @@ GEN_LRS=(2e-6)
 DMD_LOSS_WEIGHTS=(1)   # global multiplier
 
 # PAIRED per-teacher weights (same length!)
-SRC_WEIGHTS=(1.0 0.5 0.75) # 1.0 0.25  0.75 0.9
-TGT_WEIGHTS=(0.0 0.5 0.25) # 0.0 0.75  0.25 1.0
+SRC_WEIGHTS=(0.25)
+TGT_WEIGHTS=(0.75)
 
 if [[ ${#SRC_WEIGHTS[@]} -ne ${#TGT_WEIGHTS[@]} ]]; then
   echo "[ERROR] SRC_WEIGHTS and TGT_WEIGHTS must have the same length." >&2
@@ -58,7 +59,7 @@ if [[ ${#SRC_WEIGHTS[@]} -ne ${#TGT_WEIGHTS[@]} ]]; then
 fi
 
 export TT_MATCH_GUIDANCE=""  # "--tt_match_guidance" to enable
-export WANDB_PROJECT="SWEEP_METFACES_SRC_TGT"
+export WANDB_PROJECT="SWEEP_METFACES_SRC75_TGT25_DENOISINGSTEPS_DATASETSIZE"
 
 # Enable both teachers; TT is trainable
 export USE_SOURCE_TEACHER=1
@@ -66,6 +67,10 @@ export USE_TARGET_TEACHER=1
 export TRAIN_TARGET_TEACHER=1
 
 DATASETS=("metfaces")
+
+# NEW: the two sweep axes you asked for
+DATASET_SIZES=(10)
+DENOISING_STEPS=(2)
 
 fmtw () { echo "$1" | sed 's/\./p/g'; }
 
@@ -80,42 +85,51 @@ for ds in "${DATASETS[@]}"; do
           sw="${SRC_WEIGHTS[$j]}"
           tw="${TGT_WEIGHTS[$j]}"
 
-          export DATASET_NAME="$ds"
-          export GEN_LR="$lr"
-          export GEN_CLS_LOSS_WEIGHT="$glw"
-          export CLS_LOSS_WEIGHT="$clw"
-          export DMD_LOSS_WEIGHT="$dmdw"
-          export DMD_SOURCE_WEIGHT="$sw"
-          export DMD_TARGET_WEIGHT="$tw"
+          # >>> NEW nested sweeps <<<
+          for K in "${DATASET_SIZES[@]}"; do
+            for NSTEP in "${DENOISING_STEPS[@]}"; do
 
-          export GRAD_ACCUM_STEPS=1
-          export BATCH_SIZE=1
-          export NUM_DENOISING_STEP=3
+              export DATASET_NAME="$ds"
+              export DATASET_SIZE="$K"           # 10, 5, 1
+              export GEN_LR="$lr"
+              export GEN_CLS_LOSS_WEIGHT="$glw"
+              export CLS_LOSS_WEIGHT="$clw"
+              export DMD_LOSS_WEIGHT="$dmdw"
+              export DMD_SOURCE_WEIGHT="$sw"
+              export DMD_TARGET_WEIGHT="$tw"
 
-          export CUDA_VISIBLE_DEVICES=0
-          export TRAIN_GPUS=0
-          export TEST_GPUS=0
-          export NPROC_PER_NODE=1
-          export NNODES=1
+              export GRAD_ACCUM_STEPS=1
+              export BATCH_SIZE=1
+              export NUM_DENOISING_STEP="$NSTEP" # 3, 2, 1
 
-          # keep GAN off here (turn on only if you sweep cls losses)
-          if [[ "$glw" == "0" && "$clw" == "0" ]]; then
-            export GAN_CLASSIFIER=""
-          else
-            export GAN_CLASSIFIER="--gan_classifier"
-          fi
+              export CUDA_VISIBLE_DEVICES=0
+              export TRAIN_GPUS=0
+              export TEST_GPUS=0
+              export NPROC_PER_NODE=1
+              export NNODES=1
 
-          cadence_tag="$([ -n "$TT_MATCH_GUIDANCE" ] && echo tt_guid || echo tt_gen)"
-          s_tag="$(fmtw "$sw")"
-          t_tag="$(fmtw "$tw")"
-          tt_tag="src${USE_SOURCE_TEACHER}_tgt${USE_TARGET_TEACHER}_trainTT${TRAIN_TARGET_TEACHER}_${cadence_tag}"
-          gan_tag="gan$([[ -n "$GAN_CLASSIFIER" ]] && echo 1 || echo 0)"
+              # keep GAN off here (turn on only if you sweep cls losses)
+              if [[ "$glw" == "0" && "$clw" == "0" ]]; then
+                export GAN_CLASSIFIER=""
+              else
+                export GAN_CLASSIFIER="--gan_classifier"
+              fi
 
-          tag="TT_${ds}_lr${lr}_DMD${dmdw}_SW${s_tag}_TW${t_tag}_clw${clw}_glw${glw}_${tt_tag}_${gan_tag}"
-          echo "[$MODE] dataset=$ds lr=$lr DMD=$dmdw SW=$sw TW=$tw TT:$tt_tag $gan_tag tag=$tag"
+              cadence_tag="$([ -n "$TT_MATCH_GUIDANCE" ] && echo tt_guid || echo tt_gen)"
+              s_tag="$(fmtw "$sw")"
+              t_tag="$(fmtw "$tw")"
+              tt_tag="src${USE_SOURCE_TEACHER}_tgt${USE_TARGET_TEACHER}_trainTT${TRAIN_TARGET_TEACHER}_${cadence_tag}"
+              gan_tag="gan$([[ -n "$GAN_CLASSIFIER" ]] && echo 1 || echo 0)"
 
-          export EXTRA_TAG="_${tag}"
-          submit_run "$tag"
+              # include K and N in the run tag
+              tag="TT_${ds}_K${K}_N${NSTEP}_lr${lr}_DMD${dmdw}_SW${s_tag}_TW${t_tag}_clw${clw}_glw${glw}_${tt_tag}_${gan_tag}"
+              echo "[$MODE] dataset=$ds K=$K N=$NSTEP lr=$lr DMD=$dmdw SW=$sw TW=$tw TT:$tt_tag $gan_tag tag=$tag"
+
+              export EXTRA_TAG="_${tag}"
+              submit_run "$tag"
+
+            done
+          done
         done
       done
     done
