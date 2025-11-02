@@ -68,7 +68,7 @@ export DATASET_SIZE="${DATASET_SIZE:-10}"  # 10 5 1
 
 export PROJECT_PATH="0_myfiles_face"
 export DATASET_NAME="${DATASET_NAME:-"babies"}"
-export CHECKPOINT_INIT="$PROJECT_PATH/checkpoints/ffhq.pt"
+export CHECKPOINT_INIT="${CHECKPOINT_INIT:-"$PROJECT_PATH/checkpoints/ffhq.pt"}"
 export REAL_IMAGE_PATH="$PROJECT_PATH/datasets/targets/${DATASET_SIZE}_${DATASET_NAME}_lmdb"
 
 export WANDB_ENTITY="yara-mohammadi-bahram-1-ecole-superieure-de-technologie"

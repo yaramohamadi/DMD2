@@ -4,6 +4,8 @@ set -Eeuo pipefail  # -E makes ERR traps propagate out of functions
 # -----------------------
 # Training
 # -----------------------
+
+
 train() {
   echo "[train] Starting training..."
   CUDA_VISIBLE_DEVICES=$TRAIN_GPUS torchrun \
