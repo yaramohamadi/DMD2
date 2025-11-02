@@ -12,8 +12,8 @@ CHILD="0_myfiles_face/compute_canada_experiments/run_config_babies.sh"
 LOGDIR="0_myfiles_face/slurm"
 mkdir -p "$LOGDIR"
 
-MODE="${MODE:-cc}"
-export SERVER="${SERVER:-cc}"
+MODE="${MODE:-local}"
+export SERVER="${SERVER:-local}"
 export WANDB_PROJECT="${WANDB_PROJECT:-ABLATION_TABLE}"
 
 submit_run () {
@@ -62,8 +62,8 @@ export DATASET_SIZE="10"
 export NUM_DENOISING_STEP="3"
 export GRAD_ACCUM_STEPS=1
 export BATCH_SIZE=1
-export TRAIN_GPUS=0
-export TEST_GPUS=0
+export TRAIN_GPUS=1
+export TEST_GPUS=3
 export NPROC_PER_NODE=1
 export NNODES=1
 export TRAIN_TARGET_TEACHER=1
