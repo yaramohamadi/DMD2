@@ -193,3 +193,4 @@ ignored_cache
 *.png
 *.out
 *.err
+third_party/dhariwal
