@@ -56,9 +56,9 @@ export DATASET_SIZE="10"
 export NUM_DENOISING_STEP="3"
 export GRAD_ACCUM_STEPS=1
 export BATCH_SIZE=1
-export TRAIN_GPUS=0
-export TEST_GPUS=1
-export CUDA_VISIBLE_DEVICES=0,1
+export TRAIN_GPUS=2
+export TEST_GPUS=3
+export CUDA_VISIBLE_DEVICES=2,3
 export NPROC_PER_NODE=1
 export NNODES=1
 export TRAIN_TARGET_TEACHER=0
@@ -81,7 +81,7 @@ CKPT[cat]="0_myfiles_face/checkpoints/cat_finetune.pt"
 CKPT[sunglasses]="0_myfiles_face/checkpoints/sunglasses_finetune.pt"
 CKPT[metface]="0_myfiles_face/checkpoints/metface_finetune.pt"
 
-DATASETS=("babies" "metface")
+DATASETS=("sunglasses" "cat")
 
 # ---- NEW: Distill-finetuned axis (set to (0 1) to sweep, or just (0) / (1) to fix) ----
 DISTILL_FINETUNED_STATES=(0)
