@@ -68,7 +68,7 @@ export DATASET_SIZE="${DATASET_SIZE:-10}"  # 10 5 1
 
 export PROJECT_PATH="0_myfiles_face"
 export DATASET_NAME="${DATASET_NAME:-"babies"}"
-export CHECKPOINT_INIT="$PROJECT_PATH/checkpoints/ffhq.pt"
+export CHECKPOINT_INIT="${CHECKPOINT_INIT:-"$PROJECT_PATH/checkpoints/ffhq.pt"}"
 export REAL_IMAGE_PATH="$PROJECT_PATH/datasets/targets/${DATASET_SIZE}_${DATASET_NAME}_lmdb"
 
 export WANDB_ENTITY="yara-mohammadi-bahram-1-ecole-superieure-de-technologie"
@@ -158,7 +158,8 @@ export TRAIN_TARGET_TEACHER="${TRAIN_TARGET_TEACHER:-1.0}"
 export GAN_CLASSIFIER="${GAN_CLASSIFIER-"--gan_classifier"}" # --gan_classifier
 
 export EXPERIMENT_NAME="${DATASET_NAME}_lr${GEN_LR}_bs${BATCH_SIZE}_dn${NUM_DENOISING_STEP}_${TRAIN_FAKE_ON_REAL}_DMD${DMD_LOSS_WEIGHT}_GClsw${GEN_CLS_LOSS_WEIGHT}_${EXTRA_TAG}"
-export OUTPUT_PATH="$SCRATCH/$EXPERIMENT_NAME"
+export OUTPUT_PATH="$PROJECT_PATH/checkpoint_path/$EXPERIMENT_NAME"
+#"$SCRATCH/$EXPERIMENT_NAME"
 # "$PROJECT_PATH/checkpoint_path/$EXPERIMENT_NAME"
 export WANDB_NAME="$EXPERIMENT_NAME"
 
