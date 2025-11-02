@@ -135,8 +135,4 @@ train_rc=$?
 # 3) stop background streaming eval now (don’t wait for script exit)
 stop_streaming_test
 
-# 4) optional: one final eval after training completes
-echo "[test] Running final evaluation after training..."
-test_stream_conditional
-
 exit "$train_rc"

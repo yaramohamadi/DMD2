@@ -98,8 +98,9 @@ run_row () {
   submit_run "$tag"
 }
 
+# metfaces
 # ------------------ EXACT 10 RUNS ------------------
-for ds in babies metface; do
+for ds in babies; do
   # per-dataset weights when both teachers are ON
   if [[ "$ds" == "babies" ]]; then
     SW_BOTH=0.75; TW_BOTH=0.25
@@ -110,15 +111,14 @@ for ds in babies metface; do
   # (1) GAN single-head only
   run_row "$ds" 0 0 0.0 0.0 "single" "gan_single_only"
 
-  # (2) DMDsrc only (no GAN)
-  run_row "$ds" 1 0 1.0 0.0 "none" "dmd_src_only"
-
-  # (3) DMDtrg only (no GAN)
-  run_row "$ds" 0 1 0.0 1.0 "none" "dmd_trg_only"
+  run_row "$ds" 0 0 0.0 0.0 "multi" "gan_multi_only"
 
   # (4) DMDtrg + GAN multi-head
-  run_row "$ds" 0 1 0.0 1.0 "multi" "dmd_trg_gan_multi"
+  # run_row "$ds" 0 1 0.0 1.0 "multi" "dmd_trg_gan_multi"
 
   # (5) DMDsrc + DMDtrg + GAN single-head
   run_row "$ds" 1 1 "$SW_BOTH" "$TW_BOTH" "single" "dmd_src_trg_gan_single"
+
+  # (6) DMDsrc + DMDtrg + GAN single-head
+  run_row "$ds" 1 1 "$SW_BOTH" "$TW_BOTH" "none" "dmd_src_trg_only"
 done
