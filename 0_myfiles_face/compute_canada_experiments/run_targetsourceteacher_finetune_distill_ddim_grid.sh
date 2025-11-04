@@ -40,7 +40,10 @@ TRAIN_TARGET_TEACHER="$TRAIN_TARGET_TEACHER",\
 GAN_CLASSIFIER="$GAN_CLASSIFIER",\
 GAN_MULTIHEAD="$GAN_MULTIHEAD",\
 TT_MATCH_GUIDANCE="$TT_MATCH_GUIDANCE",\
-CHECKPOINT_INIT="$CHECKPOINT_INIT" \
+CHECKPOINT_INIT="$CHECKPOINT_INIT",\
+MAKE_DDIM_GRID="$MAKE_DDIM_GRID",\
+DDIM_GRID_ONLY="$DDIM_GRID_ONLY",\
+EVAL_BEST_ONCE="$EVAL_BEST_ONCE" \
       "$CHILD"
   else
     bash "$CHILD"
@@ -56,9 +59,9 @@ export DATASET_SIZE="10"
 export NUM_DENOISING_STEP="3"
 export GRAD_ACCUM_STEPS=1
 export BATCH_SIZE=1
-export TRAIN_GPUS=0
-export TEST_GPUS=1
-export CUDA_VISIBLE_DEVICES=0,1
+export TRAIN_GPUS=2
+export TEST_GPUS=3
+export CUDA_VISIBLE_DEVICES=2,3
 export NPROC_PER_NODE=1
 export NNODES=1
 export TRAIN_TARGET_TEACHER=0
@@ -82,6 +85,10 @@ CKPT[sunglasses]="0_myfiles_face/checkpoints/sunglasses_finetune.pt"
 CKPT[metfaces]="0_myfiles_face/checkpoints/metfaces_finetune.pt"
 
 DATASETS=("babies")
+
+export MAKE_DDIM_GRID="--make_ddim_grid"
+export DDIM_GRID_ONLY="--ddim_grid_only"
+export EVAL_BEST_ONCE="--eval_best_once"
 
 # ---- NEW: Distill-finetuned axis (set to (0 1) to sweep, or just (0) / (1) to fix) ----
 DISTILL_FINETUNED_STATES=(0)

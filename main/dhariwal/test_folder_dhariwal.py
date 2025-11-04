@@ -260,13 +260,12 @@ def sample(accelerator, current_model, args, model_index):
     bs    = args.eval_batch_size
     total = args.total_eval_samples
 
+    fixed_z = None
+    if args.fixed_noise:
+        fixed_z = torch.load(args.fixed_noise, map_location=accelerator.device)  # [N,3,H,W]
+
     # How many synchronized steps do we need if every rank makes `bs` images each step?
     steps = math.ceil(total / float(bs * world))
-
-    # Make the model fast for inference
-    torch.backends.cuda.matmul.allow_tf32 = True
-    torch.backends.cudnn.allow_tf32 = True
-    torch.backends.cudnn.benchmark = True
 
     Lm = args.label_dim
     current_model.eval()
@@ -322,12 +321,10 @@ def sample(accelerator, current_model, args, model_index):
 
             # build decreasing schedule [K, B] from sigma0 -> denoising_sigma_end
             sigmas = _make_sigma_schedule(sigma0, K, args.denoising_sigma_end)
-
             last_x0 = None
             for i in range(K):
                 si = sigmas[i]                     # [B]
                 # predict x0 at this sigma (your Dhariwal adapter returns x0)
-
                 x0_hat = current_model(x, si, y)   # [-1,1], NCHW
                 last_x0 = x0_hat
                 if i + 1 < K:
@@ -368,6 +365,112 @@ def sample(accelerator, current_model, args, model_index):
 
     accelerator.wait_for_everyone()
     return all_images_tensor
+
+
+
+@torch.no_grad()
+def render_ddim_style_grid_from_zbank(
+    accelerator,
+    current_model,
+    args,
+    out_png: str,
+    count: int = 100,
+    save_individual: bool = False,
+    out_dir: Optional[str] = None,
+):
+    """
+    Deterministic, DDIM-style preview:
+      - For one-step: x0 = f(z * sigma0, sigma0)
+      - For K-step: run K predictions and *carry x0 forward* (η=0 analogue), i.e., no _re_noise
+    Starts from args.fixed_noise z-bank (N,3,H,W).
+    Only rank-0 runs it to avoid DDP gather complexity.
+    """
+    if not accelerator.is_main_process:
+        return
+
+
+    z = torch.load(args.fixed_noise, map_location="cpu")
+
+    dev = accelerator.device
+    # Load z-bank (support both a bare tensor or dict {"zT": tensor})
+    zpkg = torch.load(args.fixed_noise, map_location="cpu")
+    if isinstance(zpkg, dict) and "zT" in zpkg:
+        zbank = zpkg["zT"]
+    else:
+        zbank = zpkg
+    assert zbank.dim() == 4 and zbank.size(1) == 3, "z_bank must be [N,3,H,W]"
+    H = W = int(args.resolution)
+    assert zbank.size(2) == H and zbank.size(3) == W, "z_bank spatial size must match --resolution"
+
+    N = min(int(count), int(zbank.size(0)))
+    zbank = zbank[:N].to(dev)
+
+    B = min(args.eval_batch_size, N)
+    imgs_out = []
+    Lm = args.label_dim
+
+    def make_labels(Batch):
+        if Lm == 0 or args.label_mode == "uncond":
+            return None
+        y = torch.zeros(Batch, Lm, device=dev, dtype=torch.float32)
+        # uncond or implement your existing label logic here if needed
+        return y
+
+    current_model.eval(); current_model.float()
+
+    # Few-step schedule, if needed
+    use_k = bool(args.denoising and int(args.num_denoising_step) > 1)
+    K = int(max(1, args.num_denoising_step)) if use_k else 1
+
+    for i in range(0, N, B):
+        z = zbank[i:i+B]
+        y = make_labels(z.size(0))
+
+        if not use_k:
+            # --- one-step deterministic pass ---
+            t = torch.full((z.size(0),), args.conditioning_sigma, device=dev)
+            x0 = current_model(z * args.conditioning_sigma, t, y)
+        else:
+
+            # --- K-step deterministic (η=0 analogue): carry x0 forward, no re-noise ---
+            sigma0 = torch.full((z.size(0),), args.conditioning_sigma, device=dev)
+            x = z * sigma0.view(-1,1,1,1)
+            sigmas = _make_sigma_schedule(sigma0, K, args.denoising_sigma_end)  # [K,B]
+
+            for k in range(K):
+                sk = sigmas[k]                             # [B]
+                x0 = current_model(x, sk, y)               # predict x0 at sigma sk
+                if k + 1 < K:
+                    s_next = sigmas[k + 1]                 # [B]
+                    x = _re_noise(x0, s_next)
+
+                else:
+                    x = x0                                 # final step: land at x0
+
+        # to NHWC uint8
+        x_u8 = ((x + 1.0) * 127.5).clamp(0,255).to(torch.uint8).permute(0,2,3,1).contiguous().cpu()
+        imgs_out.append(x_u8)
+
+    imgs = torch.cat(imgs_out, dim=0)[:N]  # [N,H,W,3] uint8
+
+    # Optional: save each image
+    if save_individual:
+        from pathlib import Path
+        odir = Path(out_dir or args.folder)
+        odir.mkdir(parents=True, exist_ok=True)
+        for j in range(imgs.size(0)):
+            Image.fromarray(imgs[j].numpy(), mode="RGB").save(odir / f"ddim_{j:03d}.png")
+
+    # Save a near-square grid (10x10 if N>=100)
+    import numpy as np
+    g = 10 if N >= 100 else max(1, int(np.floor(np.sqrt(N))))
+    grid = imgs[:g*g].numpy().reshape(g, g, H, W, 3)
+    grid = np.swapaxes(grid, 1, 2).reshape(g*H, g*W, 3)
+    Image.fromarray(np.ascontiguousarray(grid)).save(out_png)
+
+    return grid
+ 
+
 
 
 @torch.no_grad()
@@ -497,12 +600,20 @@ def evaluate():
     parser.add_argument("--denoising_sigma_end", type=float, default=0.5,
                         help="Terminal sigma for the unrolled schedule.")
     parser.add_argument("--use_bf16", action="store_true")
-    
-
+    parser.add_argument("--fixed_noise", type=str, default="0_myfiles_face/z_bank/zbank_256.pt",
+        help="Path to a saved z0 tensor (N,3,H,W) in float32 normal.")
+    parser.add_argument("--make_ddim_grid", action="store_true",
+        help="Create a deterministic 10x10 grid from z_bank using a DDIM-style few/one-step pass (no renoise).")
+    parser.add_argument("--grid_count", type=int, default=100,
+        help="How many images to put in the grid (use 100 for 10x10).")
+    parser.add_argument("--ddim_grid_only", action="store_true",
+        help="Only create the DDIM grid (no FID/LPIPS sampling) and exit.")
 
     args = parser.parse_args()
     if args.label_mode is None:
         args.label_mode = "uncond" if args.label_dim == 0 else "uniform"
+
+    set_seed(args.seed)
 
     folder = args.folder
     overall_stats = {}
@@ -541,11 +652,16 @@ def evaluate():
     model_index = -1
     # --- One-shot best-checkpoint evaluation and exit -----------------
     if args.eval_best_once:
+
+        print("[eval_best_once] Searching for best checkpoint...")
         target_dir = locate_best_checkpoint_dir(folder, overall_stats)
         if target_dir is None:
             if accelerator.is_main_process:
                 print("[eval_best_once] No best checkpoint found (checkpoint_best/, best_ckpt.json, or stats.json). Exiting.")
             return
+
+        print("[eval_best_once] Found best checkpoint:")
+        print(target_dir)
 
         ckpt_path = Path(target_dir)
         ckpt_name = ckpt_path.name
@@ -572,6 +688,30 @@ def evaluate():
                 str(ckpt_path / "pytorch_model.bin"),
                 args, base_model=None  # fresh construct is fine here
             ).to(accelerator.device)
+
+            # --- deterministic DDIM-style grid from z_bank (optional) ---
+            if args.make_ddim_grid and args.fixed_noise:
+                print("Rendering DDIM-style grid from z-bank...")
+                out_png = os.path.join(
+                    args.folder,
+                    f"ddimgrid_{model_index:06d}.png"
+                )
+                grid = render_ddim_style_grid_from_zbank(
+                    accelerator,
+                    generator,
+                    args,
+                    out_png=out_png,
+                    count=args.grid_count,
+                    save_individual=False,
+                    out_dir=args.folder,
+                )
+                if grid is not None:
+                    wandb.log({"ddim_grid": wandb.Image(grid)}, step=model_index if model_index is not None else 0)
+                if args.ddim_grid_only:
+                    release_eval_lock(ckpt_path)
+                    return
+            # -------------------------------------------------------------
+
             
             # Per-class panel (10 images per class)
             print("Rendering per class grid...")
@@ -689,7 +829,30 @@ def evaluate():
                     str(ckpt_path / "pytorch_model.bin"),
                     args, base_model=generator
                 ).to(accelerator.device)
-#               
+
+                # --- deterministic DDIM-style grid from z_bank (optional) ---
+                if args.make_ddim_grid and args.fixed_noise:
+                    print("Rendering DDIM-style grid from z-bank...")
+                    out_png = os.path.join(
+                        args.folder,
+                        f"ddimgrid_{model_index:06d}.png"
+                    )
+                    grid = render_ddim_style_grid_from_zbank(
+                        accelerator,
+                        generator,
+                        args,
+                        out_png=out_png,
+                        count=args.grid_count,
+                        save_individual=False,
+                        out_dir=args.folder,
+                    )
+                    if grid is not None:
+                        wandb.log({"ddim_grid": wandb.Image(grid)}, step=model_index if model_index is not None else 0)
+                    if args.ddim_grid_only:
+                        release_eval_lock(ckpt_path)
+                        return
+                # -------------------------------------------------------------
+        
                 # Per-class panel (10 images per class)
                 print("Rendering per class grid...")
                 panel = render_per_class_grid(accelerator, generator, args, model_index, n_per_class=10)

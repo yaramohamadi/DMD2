@@ -155,10 +155,15 @@ export USE_SOURCE_TEACHER="${USE_SOURCE_TEACHER:-1.0}"
 export USE_TARGET_TEACHER="${USE_TARGET_TEACHER:-0.0}"
 export TRAIN_TARGET_TEACHER="${TRAIN_TARGET_TEACHER:-1.0}"
 
+export MAKE_DDIM_GRID=${MAKE_DDIM_GRID:-} # --make_ddim_grid
+export DDIM_GRID_ONLY=${DDIM_GRID_ONLY-} # --ddim_grid_only
+export EVAL_BEST_ONCE=${EVAL_BEST_ONCE-} # --eval_best_once
+
 export GAN_CLASSIFIER="${GAN_CLASSIFIER-"--gan_classifier"}" # --gan_classifier
 
 export EXPERIMENT_NAME="${DATASET_NAME}_lr${GEN_LR}_bs${BATCH_SIZE}_dn${NUM_DENOISING_STEP}_${TRAIN_FAKE_ON_REAL}_DMD${DMD_LOSS_WEIGHT}_GClsw${GEN_CLS_LOSS_WEIGHT}_${EXTRA_TAG}"
-export OUTPUT_PATH="$PROJECT_PATH/checkpoint_path/$EXPERIMENT_NAME"
+export OUTPUT_PATH="$PROJECT_PATH/checkpoint_path/babies_finetune"
+# "$PROJECT_PATH/checkpoint_path/$EXPERIMENT_NAME"
 #"$SCRATCH/$EXPERIMENT_NAME"
 # "$PROJECT_PATH/checkpoint_path/$EXPERIMENT_NAME"
 export WANDB_NAME="$EXPERIMENT_NAME"
