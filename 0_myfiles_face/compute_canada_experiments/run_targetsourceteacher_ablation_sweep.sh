@@ -12,8 +12,8 @@ CHILD="0_myfiles_face/compute_canada_experiments/run_config_babies.sh"
 LOGDIR="0_myfiles_face/slurm"
 mkdir -p "$LOGDIR"
 
-MODE="${MODE:-cc}"
-export SERVER="${SERVER:-cc}"
+MODE="${MODE:-local}"
+export SERVER="${SERVER:-local}"
 export WANDB_PROJECT="${WANDB_PROJECT:-ABLATION_TABLE}"
 
 submit_run () {
@@ -62,8 +62,8 @@ export DATASET_SIZE="10"
 export NUM_DENOISING_STEP="3"
 export GRAD_ACCUM_STEPS=1
 export BATCH_SIZE=1
-export TRAIN_GPUS=0
-export TEST_GPUS=0
+export TRAIN_GPUS=1
+export TEST_GPUS=3
 export NPROC_PER_NODE=1
 export NNODES=1
 export TRAIN_TARGET_TEACHER=1
@@ -98,8 +98,9 @@ run_row () {
   submit_run "$tag"
 }
 
+# metfaces
 # ------------------ EXACT 10 RUNS ------------------
-for ds in babies metface; do
+for ds in babies; do
   # per-dataset weights when both teachers are ON
   if [[ "$ds" == "babies" ]]; then
     SW_BOTH=0.75; TW_BOTH=0.25
@@ -110,15 +111,14 @@ for ds in babies metface; do
   # (1) GAN single-head only
   run_row "$ds" 0 0 0.0 0.0 "single" "gan_single_only"
 
-  # (2) DMDsrc only (no GAN)
-  run_row "$ds" 1 0 1.0 0.0 "none" "dmd_src_only"
-
-  # (3) DMDtrg only (no GAN)
-  run_row "$ds" 0 1 0.0 1.0 "none" "dmd_trg_only"
+  run_row "$ds" 0 0 0.0 0.0 "multi" "gan_multi_only"
 
   # (4) DMDtrg + GAN multi-head
-  run_row "$ds" 0 1 0.0 1.0 "multi" "dmd_trg_gan_multi"
+  # run_row "$ds" 0 1 0.0 1.0 "multi" "dmd_trg_gan_multi"
 
   # (5) DMDsrc + DMDtrg + GAN single-head
   run_row "$ds" 1 1 "$SW_BOTH" "$TW_BOTH" "single" "dmd_src_trg_gan_single"
+
+  # (6) DMDsrc + DMDtrg + GAN single-head
+  run_row "$ds" 1 1 "$SW_BOTH" "$TW_BOTH" "none" "dmd_src_trg_only"
 done

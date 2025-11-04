@@ -51,7 +51,7 @@ fi
 # Fixed configs
 # -----------------------
 
-export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1}" # 0,1,2,3
+export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-1,3}" # 0,1,2,3
 export TRAIN_GPUS="${TRAIN_GPUS:-0,1}" # 
 export TEST_GPUS="${TEST_GPUS:-1}" #3
 export NPROC_PER_NODE="${NPROC_PER_NODE:-1}" #4

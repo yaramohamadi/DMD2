@@ -310,6 +310,7 @@ class dhariwalGuidance(nn.Module):
             log_extras["dmtrain_grad_target"]            = grad_t.detach()
 
         if len(losses) == 0:
+
             raise RuntimeError("DMD requested, but neither teacher active or both weights are 0.")
 
         total_dmd = sum(losses)  # <-- this requires grad via `original_latents`
@@ -645,10 +646,14 @@ class dhariwalGuidance(nn.Module):
         log_dict = {}
 
         # image.requires_grad_(True)
-        dm_dict, dm_log_dict = self.compute_distribution_matching_loss(image, labels)
+        if self.use_target_teacher or self.use_source_teacher: 
+            dm_dict, dm_log_dict = self.compute_distribution_matching_loss(image, labels)
+            loss_dict.update(dm_dict)
+            log_dict.update(dm_log_dict)
+        else:
+            print("No teachers active for DMD loss computation!")
 
-        loss_dict.update(dm_dict)
-        log_dict.update(dm_log_dict)
+        
 
         if self.gan_classifier:
             clean_cls_loss_dict = self.compute_generator_clean_cls_loss(image, labels)
