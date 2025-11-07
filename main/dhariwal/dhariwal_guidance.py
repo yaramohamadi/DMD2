@@ -298,7 +298,7 @@ class dhariwalGuidance(nn.Module):
             log_extras["dmtrain_pred_real_image_source"] = pred_src.detach()
             log_extras["dmtrain_grad_source"]            = grad_s.detach()
 
-        if (pred_tgt is not None) and (self.dmd_target_weight != 0.0):
+        if (pred_tgt is not None): #  and (self.dmd_target_weight != 0.0)
             p_real_t = (latents - pred_tgt)
             p_fake_t = (latents - pred_fake_image)
             w_t = torch.abs(p_real_t).mean(dim=[1,2,3], keepdim=True).clamp_min(1e-8)
