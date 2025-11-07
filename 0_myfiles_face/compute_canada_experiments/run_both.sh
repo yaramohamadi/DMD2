@@ -75,21 +75,21 @@ test_stream_conditional() {
     --resolution "$RESOLUTION" \
     --label_dim "$LABEL_DIM" \
     --label_mode "uniform" \
-    ${HAS_NULL:-} \
+    ${HAS_NULL-} \
     --eval_batch_size "$EVAL_BATCH_SIZE" \
     --total_eval_samples "$TOTAL_EVAL_SAMPLES" \
     --conditioning_sigma "$CONDITIONING_SIGMA" \
     --lpips_cluster_size "$LPIPS_CLUSTER_SIZE" \
     --fewshotdataset "$FEWSHOT_DATASET" \
-    ${DEN_FLAG:-} \
+    ${DEN_FLAG-} \
     --num_denoising_step "$NUM_DENOISING_STEP" \
-    ${BEST_FLAG:-} \
-    ${NO_LPIPS:-} \
-    ${USE_BF16:-}
+    ${BEST_FLAG-} \
+    ${NO_LPIPS-} \
+    ${USE_BF16-} \
+    ${MAKE_DDIM_GRID-} \
+    ${DDIM_GRID_ONLY-} \
+    ${EVAL_BEST_ONCE-}
 }
-
-
-
 
 
 # -----------------------
@@ -125,16 +125,16 @@ stop_streaming_test() {
   fi
 }
 
-trap 'stop_streaming_test' EXIT INT TERM ERR
+# trap 'stop_streaming_test' EXIT INT TERM ERR
 
 # 1) start background streaming eval
-start_streaming_test
+# start_streaming_test
 
 # 2) run training (foreground)
-train
-train_rc=$?
+#train
+#train_rc=$?
 
 # 3) stop background streaming eval now (don’t wait for script exit)
-stop_streaming_test
+#stop_streaming_test
 
 exit "$train_rc"
