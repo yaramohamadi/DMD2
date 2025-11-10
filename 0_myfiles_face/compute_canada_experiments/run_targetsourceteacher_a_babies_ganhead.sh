@@ -68,15 +68,18 @@ export USE_SOURCE_TEACHER=1
 export USE_TARGET_TEACHER=1
 export TRAIN_TARGET_TEACHER=1
 
-DATASETS=("babies")
-#  "metfaces"
+DATASETS=("babies" "metfaces")
 
 # NEW: the two sweep axes you already have
 DATASET_SIZES=(10)
 DENOISING_STEPS=(3)
 
 # NEW: GAN adversarial loss sweep
-LOSSES=("hinge")
+LOSSES=("hinge" "wgan" "BCE" "LSGAN")
+
+GAN_MULTIHEAD=""  # "--gan_multihead" to enable
+
+
 # "hinge" "wgan" 
 fmtw () { echo "$1" | sed 's/\./p/g'; }
 
