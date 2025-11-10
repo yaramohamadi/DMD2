@@ -14,7 +14,7 @@ mkdir -p "$LOGDIR"
 
 MODE="${MODE:-cc}"
 export SERVER="${SERVER:-cc}"
-export WANDB_PROJECT="${WANDB_PROJECT:-ABLATION_TABLE}"
+export WANDB_PROJECT="${WANDB_PROJECT:-SINGLE_GANHEAD_LOSS_SWEEP}"
 
 submit_run () {
   local tag="$1"
@@ -46,6 +46,7 @@ USE_TARGET_TEACHER="$USE_TARGET_TEACHER",\
 TRAIN_TARGET_TEACHER="$TRAIN_TARGET_TEACHER",\
 GAN_CLASSIFIER="$GAN_CLASSIFIER",\
 GAN_MULTIHEAD="$GAN_MULTIHEAD",\
+GAN_ADV_LOSS="$GAN_ADV_LOSS",\
 TT_MATCH_GUIDANCE="$TT_MATCH_GUIDANCE" \
       "$CHILD"
   else
@@ -98,42 +99,28 @@ run_row () {
   submit_run "$tag"
 }
 
-# metfaces
-# ------------------ EXACT 10 RUNS ------------------
-for ds in metfaces; do
-  # per-dataset weights when both teachers are ON
+# ---- Loss sweep: hinge, wgan, bce, lsgan ----
+LOSSES=("lsgan" "hinge" "wgan")
+
+for ds in metfaces babies; do
+  # Use both teachers
+  use_src=1
+  use_tgt=1
+
+  # Per-dataset weights when both teachers are ON
   if [[ "$ds" == "babies" ]]; then
     SW_BOTH=0.75; TW_BOTH=0.25
   else
     SW_BOTH=0.25; TW_BOTH=0.75
   fi
 
-  # (1) GAN single-head only
-  # run_row "$ds" 0 1 0.0 0.0 "single" "gan_single_only"
+  for loss in "${LOSSES[@]}"; do
+    export GAN_ADV_LOSS="$loss"
 
-  # run_row "$ds" 0 1 0.0 0.0 "multi" "gan_multi_only"
+    # Single-head
+    run_row "$ds" "$use_src" "$use_tgt" "$SW_BOTH" "$TW_BOTH" "single" "bothTeachers_single_${loss}"
 
-  # (4) DMDtrg + GAN multi-head
-  #run_row "$ds" 0 1 0.0 1.0 "multi" "dmd_trg_gan_multi"
-
-  # (new) DMDtrg + gan-none
-  run_row "$ds" 0 1 0.0 1.0 "none" "dmd_trg_only"
-
-  # (new) DMDsrc + gan-none
-  run_row "$ds" 1 0 1.0 0.0 "none" "dmd_src_only"
-
-  # (new) DMDsrc + GAN single-head
-  #run_row "$ds" 1 0 1.0 0.0 "single" "dmd_src_gan_single"
-
-  # (new) DMDtrg + GAN single-head
-  #run_row "$ds" 0 1 0.0 1.0 "single" "dmd_trg_gan_single"
-
-  # (new) DMDsrc + DMDtrg + GAN single-head
-  # run_row "$ds" 1 1 "$SW_BOTH" "$TW_BOTH" "single" "dmd_src_trg_gan_single"
-
-  # (5) DMDsrc + DMDtrg + GAN single-head
-  # run_row "$ds" 1 1 "$SW_BOTH" "$TW_BOTH" "single" "dmd_src_trg_gan_single"
-
-  # (6) DMDsrc + DMDtrg + GAN single-head
-  # run_row "$ds" 1 1 "$SW_BOTH" "$TW_BOTH" "none" "dmd_src_trg_only"
+    # Multi-head
+    # run_row "$ds" "$use_src" "$use_tgt" "$SW_BOTH" "$TW_BOTH" "multi"  "bothTeachers_multi_${loss}"
+  done
 done

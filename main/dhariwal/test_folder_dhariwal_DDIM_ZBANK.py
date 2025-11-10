@@ -28,6 +28,13 @@ from argparse import Namespace
 from main.dhariwal.evaluation_util import Evaluator
 from typing import Optional
 
+from guided_diffusion.gaussian_diffusion import (
+    GaussianDiffusion,
+    get_named_beta_schedule,
+    ModelMeanType, ModelVarType, LossType
+)
+import torch.nn as nn
+
 torch.set_num_threads(int(os.getenv("OMP_NUM_THREADS", "1")))
 
 
@@ -248,6 +255,86 @@ def _re_noise(x0: torch.Tensor, sigma_next: torch.Tensor) -> torch.Tensor:
 
 
 
+#_________________________________ DDIM ______________________________________
+
+
+class _DDIMModelWrapper(nn.Module):
+    """
+    Bridges GaussianDiffusion's call signature to your Dhariwal adapter.
+    Expects current_model(x, t, y) where `t` is the (rescaled) timestep and `y` are labels or None.
+    """
+    def __init__(self, base_model, label_fn):
+        super().__init__()
+        self.base = base_model
+        self.label_fn = label_fn  # function: B -> one-hot or None
+
+    def forward(self, x, t, **model_kwargs):
+        # model_kwargs may contain {'labels': y} from our caller.
+        y = model_kwargs.get("labels", None)
+        # Your UNet adapter expects float timesteps; GaussianDiffusion will
+        # rescale them to [0..1000] when rescale_timesteps=True.
+        return self.base(x, t, y)
+
+
+def _build_ddim(steps: int, schedule: str = "cosine") -> GaussianDiffusion:
+    """
+    Create a GaussianDiffusion instance with `steps` total timesteps and the chosen schedule.
+    We set:
+      - model predicts EPSILON (standard DDIM)
+      - fixed large variance (matching common open-source configs)
+      - MSE loss type (not used for sampling but required by ctor)
+      - rescale_timesteps=True so t is scaled to 0..1000 inside the diffusion
+    """
+    betas = get_named_beta_schedule(schedule, steps)
+    gd = GaussianDiffusion(
+        betas=betas,
+        model_mean_type=ModelMeanType.EPSILON,
+        model_var_type=ModelVarType.FIXED_LARGE,
+        loss_type=LossType.MSE,
+        rescale_timesteps=True,
+    )
+    return gd
+
+
+@torch.no_grad()
+def _run_ddim_once(
+    accelerator,
+    diffusion: GaussianDiffusion,
+    wrapped_model: nn.Module,
+    shape,                # (B,3,H,W)
+    noise: torch.Tensor,  # (B,3,H,W)
+    labels: torch.Tensor, # one-hot or None
+    eta: float = 0.0,
+):
+    """
+    One DDIM pass that returns x0 in [-1,1], NCHW.
+    We call diffusion.ddim_sample_loop() which iterates exactly `diffusion.num_timesteps` times.
+    """
+    dev = accelerator.device
+    kwargs = {"labels": labels} if labels is not None else {}
+    x = diffusion.ddim_sample_loop(
+        model=wrapped_model,
+        shape=shape,
+        noise=noise.to(dev),
+        clip_denoised=True,
+        denoised_fn=None,
+        cond_fn=None,
+        model_kwargs=kwargs,
+        device=dev,
+        progress=False,
+        eta=eta,
+    )
+    return x
+
+
+
+# ____________________________________________________________________________
+
+
+
+
+
+
 
 @torch.no_grad()
 def sample(accelerator, current_model, args, model_index):
@@ -304,6 +391,7 @@ def sample(accelerator, current_model, args, model_index):
     # Supporting both 1 step and multi-step
     for _ in range(steps):
         cur = bs
+
 
         if (not args.denoising) or (args.num_denoising_step <= 1):
             # -------- one-step path (existing behavior) --------
@@ -422,6 +510,11 @@ def render_ddim_style_grid_from_zbank(
     use_k = bool(args.denoising and int(args.num_denoising_step) > 1)
     K = int(max(1, args.num_denoising_step)) if use_k else 1
 
+    def karras_sigmas(sigma_min, sigma_max, N, rho=7.0, device=None, B=1):
+        i = torch.linspace(0, 1, N, device=device)
+        ramp = (sigma_max**(1/rho) + i*(sigma_min**(1/rho) - sigma_max**(1/rho)))**rho  # [N]
+        return ramp.view(N, 1).expand(N, B)  # [N,B]
+
     for i in range(0, N, B):
         z = zbank[i:i+B]
         y = make_labels(z.size(0))
@@ -435,17 +528,24 @@ def render_ddim_style_grid_from_zbank(
             # --- K-step deterministic (η=0 analogue): carry x0 forward, no re-noise ---
             sigma0 = torch.full((z.size(0),), args.conditioning_sigma, device=dev)
             x = z * sigma0.view(-1,1,1,1)
-            sigmas = _make_sigma_schedule(sigma0, K, args.denoising_sigma_end)  # [K,B]
+            # Spend steps where detail forms (near σ_min)
+            sigmas = karras_sigmas(
+                sigma_min=float(args.denoising_sigma_end),   # e.g., 0.02
+                sigma_max=float(args.conditioning_sigma),    # e.g., 80.0
+                N=K, rho=7.0, device=dev, B=z.size(0)
+            )  # [K,B]
 
             for k in range(K):
-                sk = sigmas[k]                             # [B]
-                x0 = current_model(x, sk, y)               # predict x0 at sigma sk
+                sk = sigmas[k]                        # [B]
+                x0 = current_model(x, sk, y)          # predict x0 (model already returns x0)
                 if k + 1 < K:
-                    s_next = sigmas[k + 1]                 # [B]
+                    s_next = sigmas[k + 1]            # [B]
                     x = _re_noise(x0, s_next)
-
+                    #ratio = (s_next / sk).view(-1,1,1,1)   # broadcast
+                    #x = x0 + ratio * (x - x0) 
                 else:
-                    x = x0                                 # final step: land at x0
+                    x = x0
+
 
         # to NHWC uint8
         x_u8 = ((x + 1.0) * 127.5).clamp(0,255).to(torch.uint8).permute(0,2,3,1).contiguous().cpu()
@@ -600,7 +700,7 @@ def evaluate():
     parser.add_argument("--denoising_sigma_end", type=float, default=0.5,
                         help="Terminal sigma for the unrolled schedule.")
     parser.add_argument("--use_bf16", action="store_true")
-    parser.add_argument("--fixed_noise", type=str, default=None,
+    parser.add_argument("--fixed_noise", type=str, default="0_myfiles_face/z_bank/zbank_256_3.pt",
         help="Path to a saved z0 tensor (N,3,H,W) in float32 normal.")
     parser.add_argument("--make_ddim_grid", action="store_true",
         help="Create a deterministic 10x10 grid from z_bank using a DDIM-style few/one-step pass (no renoise).")
@@ -608,6 +708,12 @@ def evaluate():
         help="How many images to put in the grid (use 100 for 10x10).")
     parser.add_argument("--ddim_grid_only", action="store_true",
         help="Only create the DDIM grid (no FID/LPIPS sampling) and exit.")
+    parser.add_argument("--sampler", choices=["edm", "k_re_noise", "ddim"], default="ddim",
+                help="edm = your one-step path; k_re_noise = your K-step re-noise path; ddim = 25-step DDIM.")
+    parser.add_argument("--ddim_steps", type=int, default=25, help="Number of DDIM steps.")
+    parser.add_argument("--ddim_eta", type=float, default=0.0, help="DDIM stochasticity (0.0 = deterministic).")
+    parser.add_argument("--ddim_schedule", choices=["cosine","linear"], default="cosine",
+                        help="Beta schedule used to instantiate DDIM.")
 
     args = parser.parse_args()
     if args.label_mode is None:
