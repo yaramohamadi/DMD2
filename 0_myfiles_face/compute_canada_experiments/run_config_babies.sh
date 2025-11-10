@@ -5,7 +5,7 @@
 #SBATCH --gres=gpu:h100:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=20G
-#SBATCH --time=09:00:00
+#SBATCH --time=00:10:00
 #SBATCH --mail-user=yara.mohammadi-bahram.1@ens.etsmtl.ca
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --output=0_myfiles_face/slurm/%x-%j.out
@@ -119,9 +119,9 @@ export GEN_CLS_LOSS_WEIGHT="${GEN_CLS_LOSS_WEIGHT:-15e-3}" #-3e-3
 export DMD_LOSS_WEIGHT="${DMD_LOSS_WEIGHT:-1}"
 export DIFFUSION_GAN_MAX_TIMESTEP=1000
 
-export LOG_ITERS=500
-export WANDB_ITERS=500
-export MAX_CHECKPOINT=500
+export LOG_ITERS=100
+export WANDB_ITERS=100
+export MAX_CHECKPOINT=100
 
 export FID_NPZ_ROOT="$PROJECT_PATH/datasets/fid_npz"
 export FEWSHOT_DATASET="$PROJECT_PATH/datasets/targets/${DATASET_SIZE}_${DATASET_NAME}/0"
@@ -162,10 +162,9 @@ export EVAL_BEST_ONCE=${EVAL_BEST_ONCE-} # --eval_best_once
 export GAN_CLASSIFIER="${GAN_CLASSIFIER-"--gan_classifier"}" # --gan_classifier
 
 export EXPERIMENT_NAME="${DATASET_NAME}_lr${GEN_LR}_bs${BATCH_SIZE}_dn${NUM_DENOISING_STEP}_${TRAIN_FAKE_ON_REAL}_DMD${DMD_LOSS_WEIGHT}_GClsw${GEN_CLS_LOSS_WEIGHT}_${EXTRA_TAG}"
-export OUTPUT_PATH="$PROJECT_PATH/checkpoint_path/babies_finetune"
-# "$PROJECT_PATH/checkpoint_path/$EXPERIMENT_NAME"
+export OUTPUT_PATH="$SCRATCH/$EXPERIMENT_NAME"
 #"$SCRATCH/$EXPERIMENT_NAME"
-# "$PROJECT_PATH/checkpoint_path/$EXPERIMENT_NAME"
+#"$PROJECT_PATH/checkpoint_path/$EXPERIMENT_NAME"
 export WANDB_NAME="$EXPERIMENT_NAME"
 
 

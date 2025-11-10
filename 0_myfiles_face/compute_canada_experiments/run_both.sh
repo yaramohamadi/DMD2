@@ -128,13 +128,13 @@ stop_streaming_test() {
 # trap 'stop_streaming_test' EXIT INT TERM ERR
 
 # 1) start background streaming eval
-# start_streaming_test
+start_streaming_test
 
 # 2) run training (foreground)
-#train
-#train_rc=$?
+train
+train_rc=$?
 
 # 3) stop background streaming eval now (don’t wait for script exit)
-#stop_streaming_test
+stop_streaming_test
 
 exit "$train_rc"

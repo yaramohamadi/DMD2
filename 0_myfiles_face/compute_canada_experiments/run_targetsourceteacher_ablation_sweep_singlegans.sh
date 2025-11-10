@@ -100,9 +100,9 @@ run_row () {
 }
 
 # ---- Loss sweep: hinge, wgan, bce, lsgan ----
-LOSSES=("hinge" "wgan" "lsgan")
+LOSSES=("lsgan") #  "hinge" "wgan"
 
-for ds in metfaces babies; do
+for ds in metfaces; do # babies
   # Use both teachers
   use_src=1
   use_tgt=1

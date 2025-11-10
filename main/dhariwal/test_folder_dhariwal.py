@@ -600,7 +600,7 @@ def evaluate():
     parser.add_argument("--denoising_sigma_end", type=float, default=0.5,
                         help="Terminal sigma for the unrolled schedule.")
     parser.add_argument("--use_bf16", action="store_true")
-    parser.add_argument("--fixed_noise", type=str, default="0_myfiles_face/z_bank/zbank_256.pt",
+    parser.add_argument("--fixed_noise", type=str, default=None,
         help="Path to a saved z0 tensor (N,3,H,W) in float32 normal.")
     parser.add_argument("--make_ddim_grid", action="store_true",
         help="Create a deterministic 10x10 grid from z_bank using a DDIM-style few/one-step pass (no renoise).")
