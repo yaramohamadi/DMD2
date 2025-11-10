@@ -127,14 +127,26 @@ class dhariwalGuidance(nn.Module):
 
         param = next(self.fake_unet.parameters())
 
-
         if self.use_target_teacher:
             args_ttar = copy.deepcopy(args)
             self.target_unet = get_edm_network(args_ttar).to(accelerator.device)
-            # init from the SAME weights as source teacher (your .pt model_id)
+
+            # 1) Init from the same base as source teacher (current behavior)
             self.target_unet = load_pt_with_logs(self.target_unet, args.model_id)
+
+            # 2) If a finetuned TT checkpoint is provided, load it on top (new behavior)
+            tt_ckpt = getattr(args, "target_teacher_ckpt_path", None)
+            if tt_ckpt is not None and os.path.exists(tt_ckpt):
+                print(f"[TargetTeacher] Loading finetuned weights from: {tt_ckpt}")
+                self.target_unet = load_pt_with_logs(self.target_unet, tt_ckpt)
+            else:
+                if tt_ckpt:
+                    print(f"[TargetTeacher] WARNING: target_teacher_ckpt_path not found: {tt_ckpt} (using {args.model_id})")
+
+            # 3) Freeze or unfreeze based on train_target_teacher
             self.target_unet.requires_grad_(bool(self.train_target_teacher))
-            # match the map_augment cleanup you do for real_unet
+
+            # 4) Match the map_augment cleanup only when frozen (like real_unet)
             if self.train_target_teacher == False:
                 try:
                     del self.target_unet.model.map_augment

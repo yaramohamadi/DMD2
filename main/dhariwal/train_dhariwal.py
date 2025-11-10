@@ -979,6 +979,8 @@ def parse_args():
         help="Weight for DMD w.r.t. SOURCE (frozen) teacher.")
     parser.add_argument("--dmd_target_weight", type=float, default=1.0,
         help="Weight for DMD w.r.t. TARGET (trainable) teacher.")
+    parser.add_argument("--target_teacher_ckpt_path", type=str, default=None,
+        help="Path to a .pt file to initialize the Target Teacher (overrides --model_id for TT only).")
     # -----------------------------------------------------------
 
     args = parser.parse_args()
