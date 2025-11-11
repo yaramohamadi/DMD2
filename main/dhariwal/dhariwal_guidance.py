@@ -8,6 +8,7 @@ import copy
 from main.dhariwal.dhariwal_network import _map_sigma_to_t, _onehot_to_class_index
 from typing import Tuple
 from typing import Optional
+import os
 
 # utils
 def _avg_spatial(x):

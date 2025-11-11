@@ -1,16 +1,16 @@
 #!/bin/bash
 # 2 datasets × 3 cases = 6 runs
-# Both teachers ON, TT frozen iff TT ckpt provided. GAN multi-head ON.
+# Both teachers ON; TT is frozen iff TT ckpt provided. GAN multi-head ON.
 
 CHILD="0_myfiles_face/compute_canada_experiments/run_config_babies.sh"
 LOGDIR="0_myfiles_face/slurm"
 mkdir -p "$LOGDIR"
 
-MODE="${MODE:-cc}"
-export SERVER="${SERVER:-cc}"
+MODE="${MODE:-local}"
+export SERVER="${SERVER:-local}"
 export WANDB_PROJECT="${WANDB_PROJECT:-ABLATION_INIT_TABLE}"
 
-# Default base checkpoint path (leave empty to disable for a given case)
+# Default base checkpoint path (raw path; runner wraps it as --checkpoint_path ...)
 export CHECKPOINT_PATH_DEFAULT="${CHECKPOINT_PATH_DEFAULT:-0_myfiles_face/checkpoint_path/FFHQ_distilled_weights/checkpoint_best}"
 
 submit_run () {
@@ -45,8 +45,7 @@ GAN_CLASSIFIER="$GAN_CLASSIFIER",\
 GAN_MULTIHEAD="$GAN_MULTIHEAD",\
 TT_MATCH_GUIDANCE="$TT_MATCH_GUIDANCE",\
 TARGET_TEACHER_CHECKPOINT_PATH="$TARGET_TEACHER_CHECKPOINT_PATH",\
-CHECKPOINT_PATH="$CHECKPOINT_PATH",\
-EXTRA_ARGS="$EXTRA_ARGS" \
+CHECKPOINT_PATH="$CHECKPOINT_PATH" \
       "$CHILD"
   else
     bash "$CHILD"
@@ -62,8 +61,8 @@ export DATASET_SIZE="10"
 export NUM_DENOISING_STEP="3"
 export GRAD_ACCUM_STEPS=1
 export BATCH_SIZE=1
-export TRAIN_GPUS=0
-export TEST_GPUS=0
+export TRAIN_GPUS=1
+export TEST_GPUS=2
 export NPROC_PER_NODE=1
 export NNODES=1
 
@@ -93,58 +92,46 @@ setup_dataset () {
   fi
 }
 
-# Build EXTRA_ARGS consistently from TT path (if set)
-set_extra_args_from_tt () {
-  if [[ -n "$TARGET_TEACHER_CHECKPOINT_PATH" ]]; then
-    EXTRA_ARGS="--target_teacher_ckpt_path \"${TARGET_TEACHER_CHECKPOINT_PATH}\""
-  else
-    EXTRA_ARGS=""
-  fi
-  export EXTRA_ARGS
-}
-
 # One dataset × three cases
 run_cases () {
   local ds="$1"; setup_dataset "$ds"
   local s_tag="$(fmtw "$DMD_SOURCE_WEIGHT")"
   local t_tag="$(fmtw "$DMD_TARGET_WEIGHT")"
 
-  # ---------- Case 1: base_only (CHECKPOINT_PATH set, no TT ckpt) ----------
-  export CHECKPOINT_PATH="$CHECKPOINT_PATH_DEFAULT"
-  export TARGET_TEACHER_CHECKPOINT_PATH=""
-  export TRAIN_TARGET_TEACHER=1         # TT ckpt disabled -> train TT
-  set_extra_args_from_tt
-  if [[ -z "$CHECKPOINT_PATH" ]]; then
-    echo "[WARN] base_only: CHECKPOINT_PATH empty → base init will be skipped."
-  elif [[ ! -e "$CHECKPOINT_PATH" ]]; then
-    echo "[WARN] base_only: CHECKPOINT_PATH not found: $CHECKPOINT_PATH"
-  fi
-  export EXTRA_TAG="_${ds}_SW${s_tag}_TW${t_tag}_base_only"
-  submit_run "SW${s_tag}_TW${t_tag}_${ds}_base_only_ganMH"
+  # ---------- Case 1: base_only (base ckpt yes, TT ckpt no) ----------
+  # export CHECKPOINT_PATH="$CHECKPOINT_PATH_DEFAULT"      # raw path; runner wraps with --checkpoint_path
+  # export TARGET_TEACHER_CHECKPOINT_PATH=""               # no TT flag
+  # export TRAIN_TARGET_TEACHER=1                          # train TT when TT ckpt is absent
+  # if [[ -z "$CHECKPOINT_PATH" ]]; then
+  #   echo "[WARN] base_only: CHECKPOINT_PATH empty → base init skipped."
+  # elif [[ ! -e "$CHECKPOINT_PATH" ]]; then
+  #   echo "[WARN] base_only: CHECKPOINT_PATH not found: $CHECKPOINT_PATH"
+  # fi
+  # export EXTRA_TAG="_${ds}_SW${s_tag}_TW${t_tag}_base_only"
+  # submit_run "SW${s_tag}_TW${t_tag}_${ds}_base_only_ganMH"
 
-  # ---------- Case 2: tt_only (TT ckpt set, no base ckpt) ----------
-  export CHECKPOINT_PATH=""             # empty → no base load
-  export TARGET_TEACHER_CHECKPOINT_PATH="$TT_CKPT_FILE"
-  export TRAIN_TARGET_TEACHER=0         # TT ckpt enabled -> freeze TT
-  set_extra_args_from_tt
-  if [[ ! -e "$TARGET_TEACHER_CHECKPOINT_PATH" ]]; then
-    echo "[WARN] tt_only: TARGET_TEACHER_CHECKPOINT_PATH not found: $TARGET_TEACHER_CHECKPOINT_PATH"
-  fi
-  export EXTRA_TAG="_${ds}_SW${s_tag}_TW${t_tag}_tt_only"
-  submit_run "SW${s_tag}_TW${t_tag}_${ds}_tt_only_ganMH"
+  # ---------- Case 2: tt_only (TT ckpt yes, base ckpt no) ----------
+  #export CHECKPOINT_PATH=""                              # no base
+  #export TARGET_TEACHER_CHECKPOINT_PATH="--target_teacher_ckpt_path ${TT_CKPT_FILE}"
+  #export TRAIN_TARGET_TEACHER=0                          # freeze TT when TT ckpt is provided
+  #if [[ ! -e "$TT_CKPT_FILE" ]]; then
+  #  echo "[WARN] tt_only: TT ckpt not found: $TT_CKPT_FILE"
+  #fi
+  #export EXTRA_TAG="_${ds}_SW${s_tag}_TW${t_tag}_tt_only"
+  #submit_run "SW${s_tag}_TW${t_tag}_${ds}_tt_only_ganMH"
 
-  # ---------- Case 3: both (CHECKPOINT_PATH and TT ckpt set) ----------
+
+  # ---------- Case 3: both (base ckpt yes, TT ckpt yes) ----------
   export CHECKPOINT_PATH="$CHECKPOINT_PATH_DEFAULT"
-  export TARGET_TEACHER_CHECKPOINT_PATH="$TT_CKPT_FILE"
-  export TRAIN_TARGET_TEACHER=0         # TT ckpt enabled -> freeze TT
-  set_extra_args_from_tt
+  export TARGET_TEACHER_CHECKPOINT_PATH="--target_teacher_ckpt_path ${TT_CKPT_FILE}"
+  export TRAIN_TARGET_TEACHER=0
   if [[ -z "$CHECKPOINT_PATH" ]]; then
-    echo "[WARN] both: CHECKPOINT_PATH empty → base init will be skipped."
+    echo "[WARN] both: CHECKPOINT_PATH empty → base init skipped."
   elif [[ ! -e "$CHECKPOINT_PATH" ]]; then
     echo "[WARN] both: CHECKPOINT_PATH not found: $CHECKPOINT_PATH"
   fi
-  if [[ ! -e "$TARGET_TEACHER_CHECKPOINT_PATH" ]]; then
-    echo "[WARN] both: TARGET_TEACHER_CHECKPOINT_PATH not found: $TARGET_TEACHER_CHECKPOINT_PATH"
+  if [[ ! -e "$TT_CKPT_FILE" ]]; then
+    echo "[WARN] both: TT ckpt not found: $TT_CKPT_FILE"
   fi
   export EXTRA_TAG="_${ds}_SW${s_tag}_TW${t_tag}_both"
   submit_run "SW${s_tag}_TW${t_tag}_${ds}_both_ganMH"

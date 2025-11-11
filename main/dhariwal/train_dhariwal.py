@@ -399,11 +399,12 @@ class Trainer:
 
     def load(self, checkpoint_path):
         # Expecting directories like .../checkpoint_model_000123
-        self.global_step = int(checkpoint_path.rstrip("/").split("_")[-1])
+        self.global_step = 0# int(checkpoint_path.rstrip("/").split("_")[-1])
         accum = self.accelerator.gradient_accumulation_steps
         
         print("loading a previous checkpoints including optimizer and random seed")
-        print(self.accelerator.load_state(checkpoint_path, strict=False))
+        # print(self.accelerator.load_state(checkpoint_path, strict=False))
+        load_weights_only(checkpoint_path, self.model, accelerator=self.accelerator, strict=False)
         self.accelerator.print(f"Loaded checkpoint from {checkpoint_path}")
         self.step = self.global_step * max(1, accum)  # micro-step counter aligned to optimizer step
 
