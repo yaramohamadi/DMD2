@@ -32,9 +32,9 @@ if [[ "$SERVER" == "cc" ]]; then
   source "$VENV_DIR/bin/activate"
 
   # Only for FIR not for NIBI
-  REPO_ROOT="/home/ymbahram/projects/def-hadi87/ymbahram/DMD2/DMD2/"
-  cd "$REPO_ROOT"
-  export PYTHONPATH="$REPO_ROOT:$PYTHONPATH"
+  #REPO_ROOT="/home/ymbahram/projects/def-hadi87/ymbahram/DMD2/DMD2/"
+ # cd "$REPO_ROOT"
+  #export PYTHONPATH="$REPO_ROOT:$PYTHONPATH"
 
   echo "Compute canada activated"
 fi
@@ -51,9 +51,9 @@ fi
 # Fixed configs
 # -----------------------
 
-export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-1,2}" # 0,1,2,3
-export TRAIN_GPUS="${TRAIN_GPUS:-0,1}" # 
-export TEST_GPUS="${TEST_GPUS:-1}" #3
+export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1}" # 0,1,2,3
+export TRAIN_GPUS="${TRAIN_GPUS:-0}" # 
+export TEST_GPUS="${TEST_GPUS:-0}" #3
 export NPROC_PER_NODE="${NPROC_PER_NODE:-1}" #4
 export NNODES="${NNODES:-1}"
 export MASTER_ADDR=127.0.0.1
@@ -162,9 +162,9 @@ export EVAL_BEST_ONCE=${EVAL_BEST_ONCE-} # --eval_best_once
 
 export GAN_CLASSIFIER="${GAN_CLASSIFIER-"--gan_classifier"}" # --gan_classifier
 
-export EXPERIMENT_NAME="${DATASET_NAME}_lr${GEN_LR}_bs${BATCH_SIZE}_dn${NUM_DENOISING_STEP}_${TRAIN_FAKE_ON_REAL}_DMD${DMD_LOSS_WEIGHT}_GClsw${GEN_CLS_LOSS_WEIGHT}_${EXTRA_TAG}"
-export OUTPUT_PATH="$PROJECT_PATH/checkpoint_path/$EXPERIMENT_NAME"
-#"$SCRATCH/$EXPERIMENT_NAME"
+export EXPERIMENT_NAME="$INIT_{DATASET_NAME}_lr${GEN_LR}_bs${BATCH_SIZE}_dn${NUM_DENOISING_STEP}_${TRAIN_FAKE_ON_REAL}_DMD${DMD_LOSS_WEIGHT}_GClsw${GEN_CLS_LOSS_WEIGHT}_${EXTRA_TAG}"
+export OUTPUT_PATH="$SCRATCH/$EXPERIMENT_NAME"
+# "$PROJECT_PATH/checkpoint_path/$EXPERIMENT_NAME"
 #"$PROJECT_PATH/checkpoint_path/$EXPERIMENT_NAME"
 export WANDB_NAME="$EXPERIMENT_NAME"
 export CHECKPOINT_PATH="${CHECKPOINT_PATH-}"
