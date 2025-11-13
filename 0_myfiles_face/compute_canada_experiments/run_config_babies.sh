@@ -5,7 +5,7 @@
 #SBATCH --gres=gpu:h100:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=20G
-#SBATCH --time=09:00:00
+#SBATCH --time=06:30:00
 #SBATCH --mail-user=yara.mohammadi-bahram.1@ens.etsmtl.ca
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --output=0_myfiles_face/slurm/%x-%j.out
@@ -32,9 +32,9 @@ if [[ "$SERVER" == "cc" ]]; then
   source "$VENV_DIR/bin/activate"
 
   # Only for FIR not for NIBI
-  #REPO_ROOT="/home/ymbahram/projects/def-hadi87/ymbahram/DMD2/DMD2/"
- # cd "$REPO_ROOT"
-  #export PYTHONPATH="$REPO_ROOT:$PYTHONPATH"
+  REPO_ROOT="/home/ymbahram/projects/def-hadi87/ymbahram/DMD2/DMD2/"
+  cd "$REPO_ROOT"
+  export PYTHONPATH="$REPO_ROOT:$PYTHONPATH"
 
   echo "Compute canada activated"
 fi
@@ -63,7 +63,7 @@ export GRAD_ACCUM_STEPS="${GRAD_ACCUM_STEPS:-4}"
 export BATCH_SIZE="${BATCH_SIZE:-1}"
 export EVAL_BATCH_SIZE=10
 export NUM_DENOISING_STEP="${NUM_DENOISING_STEP:-3}"
-export TRAIN_ITERS="${TRAIN_ITERS:-30000}"
+export TRAIN_ITERS="${TRAIN_ITERS:-40000}"
 export DATASET_SIZE="${DATASET_SIZE:-10}"  # 10 5 1
 
 export PROJECT_PATH="0_myfiles_face"
@@ -162,7 +162,7 @@ export EVAL_BEST_ONCE=${EVAL_BEST_ONCE-} # --eval_best_once
 
 export GAN_CLASSIFIER="${GAN_CLASSIFIER-"--gan_classifier"}" # --gan_classifier
 
-export EXPERIMENT_NAME="$INIT_{DATASET_NAME}_lr${GEN_LR}_bs${BATCH_SIZE}_dn${NUM_DENOISING_STEP}_${TRAIN_FAKE_ON_REAL}_DMD${DMD_LOSS_WEIGHT}_GClsw${GEN_CLS_LOSS_WEIGHT}_${EXTRA_TAG}"
+export EXPERIMENT_NAME="${DATASET_NAME}_lr${GEN_LR}_bs${BATCH_SIZE}_dn${NUM_DENOISING_STEP}_${TRAIN_FAKE_ON_REAL}_DMD${DMD_LOSS_WEIGHT}_GClsw${GEN_CLS_LOSS_WEIGHT}_${EXTRA_TAG}"
 export OUTPUT_PATH="$SCRATCH/$EXPERIMENT_NAME"
 # "$PROJECT_PATH/checkpoint_path/$EXPERIMENT_NAME"
 #"$PROJECT_PATH/checkpoint_path/$EXPERIMENT_NAME"

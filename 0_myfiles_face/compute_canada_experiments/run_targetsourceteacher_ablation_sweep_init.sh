@@ -25,7 +25,7 @@ DATASET_SIZE="$DATASET_SIZE",\
 GEN_LR="$GEN_LR",\
 GEN_CLS_LOSS_WEIGHT="$GEN_CLS_LOSS_WEIGHT",\
 CLS_LOSS_WEIGHT="$CLS_LOSS_WEIGHT",\
-DMD_LOSS_WEIGHT="$DMD_LOSS_WEIGHT",\sq
+DMD_LOSS_WEIGHT="$DMD_LOSS_WEIGHT",\
 DMD_SOURCE_WEIGHT="$DMD_SOURCE_WEIGHT",\
 DMD_TARGET_WEIGHT="$DMD_TARGET_WEIGHT",\
 GRAD_ACCUM_STEPS="$GRAD_ACCUM_STEPS",\
@@ -109,7 +109,7 @@ run_cases () {
   fi
   export EXTRA_TAG="_${ds}_SW${s_tag}_TW${t_tag}_base_only"
   submit_run "SW${s_tag}_TW${t_tag}_${ds}_base_only_ganMH"
-
+# 
   # ---------- Case 2: tt_only (TT ckpt yes, base ckpt no) ----------
   export CHECKPOINT_PATH=""                              # no base
   export TARGET_TEACHER_CHECKPOINT_PATH="--target_teacher_ckpt_path ${TT_CKPT_FILE}"

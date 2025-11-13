@@ -14,7 +14,7 @@ mkdir -p "$LOGDIR"
 
 MODE="${MODE:-cc}"
 export SERVER="${SERVER:-cc}"
-export WANDB_PROJECT="${WANDB_PROJECT:-ABLATION_TABLE}"
+export WANDB_PROJECT="${WANDB_PROJECT:-TRG1_SRC0_sunglass_cat}"
 
 submit_run () {
   local tag="$1"
@@ -102,7 +102,7 @@ run_row () {
 # ------------------ EXACT 10 RUNS ------------------
 for ds in metfaces; do
   # per-dataset weights when both teachers are ON
-  if [[ "$ds" == "babies" ]]; then
+  if [[ "$ds" == "sunglasses" ]]; then
     SW_BOTH=0.75; TW_BOTH=0.25
   else
     SW_BOTH=0.25; TW_BOTH=0.75
@@ -114,19 +114,22 @@ for ds in metfaces; do
   # run_row "$ds" 0 1 0.0 0.0 "multi" "gan_multi_only"
 
   # (4) DMDtrg + GAN multi-head
-  #run_row "$ds" 0 1 0.0 1.0 "multi" "dmd_trg_gan_multi"
+  # run_row "$ds" 0 1 0.0 1.0 "multi" "dmd_trg_gan_multi"
+
+  # (4) DMDsrc + GAN multi-head
+  run_row "$ds" 1 0 1.0 0.0 "multi" "dmd_src_gan_multi"
 
   # (new) DMDtrg + gan-none
-  run_row "$ds" 0 1 0.0 1.0 "none" "dmd_trg_only"
+  # run_row "$ds" 0 1 0.0 1.0 "none" "dmd_trg_only"
 
   # (new) DMDsrc + gan-none
-  run_row "$ds" 1 0 1.0 0.0 "none" "dmd_src_only"
+  # run_row "$ds" 1 0 1.0 0.0 "none" "dmd_src_only"
 
   # (new) DMDsrc + GAN single-head
-  #run_row "$ds" 1 0 1.0 0.0 "single" "dmd_src_gan_single"
+  # run_row "$ds" 1 0 1.0 0.0 "single" "dmd_src_gan_single"
 
   # (new) DMDtrg + GAN single-head
-  #run_row "$ds" 0 1 0.0 1.0 "single" "dmd_trg_gan_single"
+  # run_row "$ds" 0 1 0.0 1.0 "single" "dmd_trg_gan_single"
 
   # (new) DMDsrc + DMDtrg + GAN single-head
   # run_row "$ds" 1 1 "$SW_BOTH" "$TW_BOTH" "single" "dmd_src_trg_gan_single"
