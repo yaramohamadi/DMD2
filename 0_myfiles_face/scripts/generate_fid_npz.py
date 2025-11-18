@@ -15,6 +15,6 @@ image_path = "0_myfiles_face/datasets/fid_folders/cat_resized"
 mu, sigma, act = compute_statistics_of_path(image_path)
 
 # Save them into .npz file
-np.savez("0_myfiles_face/datasets/fid_npz/cat.npz", mu=mu, sigma=sigma, act=act)
+np.savez("0_myfiles_face/datasets/fid_npz/vangogh.npz", mu=mu, sigma=sigma, act=act)
 
 print("Saved metfaces.npz successfully.")

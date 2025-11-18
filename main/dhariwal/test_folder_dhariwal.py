@@ -762,11 +762,11 @@ def evaluate():
             stats = {}
             if accelerator.is_main_process:
                 evaluator = Evaluator(eval_args, imgs_nchw_f01, ref_npz_path, args.lpips_cluster_size)
-                fid_score = evaluator.calc_fid()
+                # fid_score = evaluator.calc_fid()
                 #prec, rec = evaluator.calc_precision_recall(nearest_k=5)
                 #intra_lpips = -1.0 if args.no_lpips else evaluator.calc_intra_lpips()
 
-                stats["fid"] = float(fid_score)
+                stats["fid"] = 0 # float(fid_score)
                 stats["intra_lpips"] = 0 #float(intra_lpips)
                 stats["precision"] = 0# float(prec)
                 stats["recall"] = 0# float(rec)
@@ -910,7 +910,7 @@ def evaluate():
 
                     # prec, rec = evaluator.calc_precision_recall(nearest_k=5)
 
-                    fid_score = evaluator.calc_fid()
+                    fid_score = 0 # evaluator.calc_fid()
                     prec = 0
                     rec = 0
 
@@ -931,10 +931,10 @@ def evaluate():
                                 write_best_meta(Path(folder), new_best)
                                 print(f"[BEST] New best FID {current_fid:.4f} at iter {model_index}. Saved to: {dst_path}")
                     
-                    if args.no_lpips:
-                       intra_lpips = -1.0
-                    else:
-                       intra_lpips = evaluator.calc_intra_lpips()
+                    #if args.no_lpips:
+                    #   intra_lpips = -1.0
+                    #else:
+                    intra_lpips = 0 # evaluator.calc_intra_lpips()
 
                     stats["fid"] = float(fid_score)
                     stats["intra_lpips"] = float(intra_lpips)

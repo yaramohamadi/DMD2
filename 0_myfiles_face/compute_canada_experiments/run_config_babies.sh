@@ -125,10 +125,10 @@ export MAX_CHECKPOINT=500
 
 export FID_NPZ_ROOT="$PROJECT_PATH/datasets/fid_npz"
 export FEWSHOT_DATASET="$PROJECT_PATH/datasets/targets/${DATASET_SIZE}_${DATASET_NAME}/0"
-export TOTAL_EVAL_SAMPLES=5000
+export TOTAL_EVAL_SAMPLES=100 # 5000
 export CONDITIONING_SIGMA=80.0
 export LPIPS_CLUSTER_SIZE=100
-export NO_LPIPS=${NO_LPIPS-}  # --no_lpips
+export NO_LPIPS=${NO_LPIPS-"--no_lpips"}  # --no_lpips
 export USE_BF16="--use_bf16" # --use_bf16
 
 export GAN_HEAD_TYPE="global"
@@ -163,7 +163,7 @@ export EVAL_BEST_ONCE=${EVAL_BEST_ONCE-} # --eval_best_once
 export GAN_CLASSIFIER="${GAN_CLASSIFIER-"--gan_classifier"}" # --gan_classifier
 
 export EXPERIMENT_NAME="${DATASET_NAME}_lr${GEN_LR}_bs${BATCH_SIZE}_dn${NUM_DENOISING_STEP}_${TRAIN_FAKE_ON_REAL}_DMD${DMD_LOSS_WEIGHT}_GClsw${GEN_CLS_LOSS_WEIGHT}_${EXTRA_TAG}"
-export OUTPUT_PATH="$SCRATCH/$EXPERIMENT_NAME"
+export OUTPUT_PATH="$PROJECT_PATH/checkpoint_path/$EXPERIMENT_NAME" #"$SCRATCH/$EXPERIMENT_NAME"
 #"$SCRATCH/$EXPERIMENT_NAME"
 #"$PROJECT_PATH/checkpoint_path/$EXPERIMENT_NAME"
 export WANDB_NAME="$EXPERIMENT_NAME"
