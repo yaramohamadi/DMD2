@@ -5,7 +5,7 @@
 #SBATCH --gres=gpu:h100:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=20G
-#SBATCH --time=09:00:00
+#SBATCH --time=06:30:00
 #SBATCH --mail-user=yara.mohammadi-bahram.1@ens.etsmtl.ca
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --output=0_myfiles_face/slurm/%x-%j.out
@@ -52,8 +52,8 @@ fi
 # -----------------------
 
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1}" # 0,1,2,3
-export TRAIN_GPUS="${TRAIN_GPUS:-0,1}" # 
-export TEST_GPUS="${TEST_GPUS:-1}" #3
+export TRAIN_GPUS="${TRAIN_GPUS:-0}" # 
+export TEST_GPUS="${TEST_GPUS:-0}" #3
 export NPROC_PER_NODE="${NPROC_PER_NODE:-1}" #4
 export NNODES="${NNODES:-1}"
 export MASTER_ADDR=127.0.0.1
@@ -63,7 +63,7 @@ export GRAD_ACCUM_STEPS="${GRAD_ACCUM_STEPS:-4}"
 export BATCH_SIZE="${BATCH_SIZE:-1}"
 export EVAL_BATCH_SIZE=10
 export NUM_DENOISING_STEP="${NUM_DENOISING_STEP:-3}"
-export TRAIN_ITERS="${TRAIN_ITERS:-30000}"
+export TRAIN_ITERS="${TRAIN_ITERS:-40000}"
 export DATASET_SIZE="${DATASET_SIZE:-10}"  # 10 5 1
 
 export PROJECT_PATH="0_myfiles_face"
