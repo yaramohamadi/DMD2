@@ -12,9 +12,9 @@ CHILD="0_myfiles_face/compute_canada_experiments/run_config_babies.sh"
 LOGDIR="0_myfiles_face/slurm"
 mkdir -p "$LOGDIR"
 
-MODE="${MODE:-cc}"
+MODE="${MODE:-local}"
 export SERVER="${SERVER:-cc}"
-export WANDB_PROJECT="${WANDB_PROJECT:-TRG1_SRC0_sunglass_cat}"
+export WANDB_PROJECT="${WANDB_PROJECT:-RED_ABLATIONS}"
 
 submit_run () {
   local tag="$1"
@@ -117,10 +117,10 @@ for ds in metfaces; do
   # run_row "$ds" 0 1 0.0 1.0 "multi" "dmd_trg_gan_multi"
 
   # (4) DMDsrc + GAN multi-head
-  run_row "$ds" 1 0 1.0 0.0 "multi" "dmd_src_gan_multi"
+  # run_row "$ds" 1 0 1.0 0.0 "multi" "dmd_src_gan_multi"
 
   # (new) DMDtrg + gan-none
-  # run_row "$ds" 0 1 0.0 1.0 "none" "dmd_trg_only"
+  run_row "$ds" 0 1 0.0 1.0 "none" "dmd_trg_only"
 
   # (new) DMDsrc + gan-none
   # run_row "$ds" 1 0 1.0 0.0 "none" "dmd_src_only"
@@ -132,11 +132,6 @@ for ds in metfaces; do
   # run_row "$ds" 0 1 0.0 1.0 "single" "dmd_trg_gan_single"
 
   # (new) DMDsrc + DMDtrg + GAN single-head
-  # run_row "$ds" 1 1 "$SW_BOTH" "$TW_BOTH" "single" "dmd_src_trg_gan_single"
+  # run_row "$ds" 1 1 "$SW_BOTH" "$TW_BOTH" "multi" "dmd_src_trg_gan_multi"
 
-  # (5) DMDsrc + DMDtrg + GAN single-head
-  # run_row "$ds" 1 1 "$SW_BOTH" "$TW_BOTH" "single" "dmd_src_trg_gan_single"
-
-  # (6) DMDsrc + DMDtrg + GAN single-head
-  # run_row "$ds" 1 1 "$SW_BOTH" "$TW_BOTH" "none" "dmd_src_trg_only"
 done

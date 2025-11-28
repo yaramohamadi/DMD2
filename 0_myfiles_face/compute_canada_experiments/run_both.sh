@@ -101,10 +101,12 @@ test_stream_conditional() {
 start_streaming_test() {
   export -f test_stream_conditional
   # Start in a new session so the PGID corresponds to the leader we can kill
-  ( setsid bash -c 'test_stream_conditional' ) &
-  TEST_PID=$!
-  TEST_PGID="$(ps -o pgid= "$TEST_PID" | tr -d ' ')" || true
-  echo "[orchestrator] started streaming test (pid=$TEST_PID, pgid=${TEST_PGID:-?})"
+  bash -c 'test_stream_conditional'
+
+  #( setsid bash -c 'test_stream_conditional' ) &
+  #TEST_PID=$!
+  #TEST_PGID="$(ps -o pgid= "$TEST_PID" | tr -d ' ')" || true
+  #echo "[orchestrator] started streaming test (pid=$TEST_PID, pgid=${TEST_PGID:-?})"
 }
 
 stop_streaming_test() {
@@ -130,13 +132,13 @@ stop_streaming_test() {
 # trap 'stop_streaming_test' EXIT INT TERM ERR
 
 # 1) start background streaming eval
-start_streaming_test
+# start_streaming_test
 
 # 2) run training (foreground)
 train
 train_rc=$?
 
 # 3) stop background streaming eval now (don’t wait for script exit)
-stop_streaming_test
+# stop_streaming_test
 
 exit "$train_rc"

@@ -8,7 +8,7 @@ mkdir -p "$LOGDIR"
 
 MODE="${MODE:-cc}"
 export SERVER="${SERVER:-cc}"
-export WANDB_PROJECT="${WANDB_PROJECT:-ABLATION_INIT_TABLE}"
+export WANDB_PROJECT="${WANDB_PROJECT:-RED_ABLATIONS}"
 
 # Default base checkpoint path (raw path; runner wraps it as --checkpoint_path ...)
 export CHECKPOINT_PATH_DEFAULT="${CHECKPOINT_PATH_DEFAULT:-0_myfiles_face/checkpoint_path/FFHQ_distilled_weights/checkpoint_best}"
@@ -111,32 +111,32 @@ run_cases () {
   submit_run "SW${s_tag}_TW${t_tag}_${ds}_base_only_ganMH"
 # 
   # ---------- Case 2: tt_only (TT ckpt yes, base ckpt no) ----------
-  export CHECKPOINT_PATH=""                              # no base
-  export TARGET_TEACHER_CHECKPOINT_PATH="--target_teacher_ckpt_path ${TT_CKPT_FILE}"
-  export TRAIN_TARGET_TEACHER=0 # freeze TT when TT ckpt is provided
-  if [[ ! -e "$TT_CKPT_FILE" ]]; then
-    echo "[WARN] tt_only: TT ckpt not found: $TT_CKPT_FILE"
-  fi
-  export EXTRA_TAG="_${ds}_SW${s_tag}_TW${t_tag}_tt_only"
-  submit_run "SW${s_tag}_TW${t_tag}_${ds}_tt_only_ganMH"
-
-  # ---------- Case 3: both (base ckpt yes, TT ckpt yes) ----------
-  export CHECKPOINT_PATH="$CHECKPOINT_PATH_DEFAULT"
-  export TARGET_TEACHER_CHECKPOINT_PATH="--target_teacher_ckpt_path ${TT_CKPT_FILE}"
-  export TRAIN_TARGET_TEACHER=0
-  if [[ -z "$CHECKPOINT_PATH" ]]; then
-    echo "[WARN] both: CHECKPOINT_PATH empty → base init skipped."
-  elif [[ ! -e "$CHECKPOINT_PATH" ]]; then
-    echo "[WARN] both: CHECKPOINT_PATH not found: $CHECKPOINT_PATH"
-  fi
-  if [[ ! -e "$TT_CKPT_FILE" ]]; then
-    echo "[WARN] both: TT ckpt not found: $TT_CKPT_FILE"
-  fi
-  export EXTRA_TAG="_${ds}_SW${s_tag}_TW${t_tag}_both"
-  submit_run "SW${s_tag}_TW${t_tag}_${ds}_both_ganMH"
+  # export CHECKPOINT_PATH=""                              # no base
+  # export TARGET_TEACHER_CHECKPOINT_PATH="--target_teacher_ckpt_path ${TT_CKPT_FILE}"
+  # export TRAIN_TARGET_TEACHER=0 # freeze TT when TT ckpt is provided
+  # if [[ ! -e "$TT_CKPT_FILE" ]]; then
+  #   echo "[WARN] tt_only: TT ckpt not found: $TT_CKPT_FILE"
+  # fi
+  # export EXTRA_TAG="_${ds}_SW${s_tag}_TW${t_tag}_tt_only"
+  # submit_run "SW${s_tag}_TW${t_tag}_${ds}_tt_only_ganMH"
+# 
+  # # ---------- Case 3: both (base ckpt yes, TT ckpt yes) ----------
+  # export CHECKPOINT_PATH="$CHECKPOINT_PATH_DEFAULT"
+  # export TARGET_TEACHER_CHECKPOINT_PATH="--target_teacher_ckpt_path ${TT_CKPT_FILE}"
+  # export TRAIN_TARGET_TEACHER=0
+  # if [[ -z "$CHECKPOINT_PATH" ]]; then
+  #   echo "[WARN] both: CHECKPOINT_PATH empty → base init skipped."
+  # elif [[ ! -e "$CHECKPOINT_PATH" ]]; then
+  #   echo "[WARN] both: CHECKPOINT_PATH not found: $CHECKPOINT_PATH"
+  # fi
+  # if [[ ! -e "$TT_CKPT_FILE" ]]; then
+  #   echo "[WARN] both: TT ckpt not found: $TT_CKPT_FILE"
+  # fi
+  # export EXTRA_TAG="_${ds}_SW${s_tag}_TW${t_tag}_both"
+  # submit_run "SW${s_tag}_TW${t_tag}_${ds}_both_ganMH"
 }
 
 # ----- RUN: metfaces + babies -----
-for ds in metfaces babies; do
+for ds in metfaces; do
   run_cases "$ds"
 done

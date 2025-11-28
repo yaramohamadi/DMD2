@@ -32,9 +32,9 @@ if [[ "$SERVER" == "cc" ]]; then
   source "$VENV_DIR/bin/activate"
 
   # Only for FIR not for NIBI
-  REPO_ROOT="/home/ymbahram/projects/def-hadi87/ymbahram/DMD2/DMD2/"
-  cd "$REPO_ROOT"
-  export PYTHONPATH="$REPO_ROOT:$PYTHONPATH"
+  #REPO_ROOT="/home/ymbahram/projects/def-hadi87/ymbahram/DMD2/DMD2/"
+  #cd "$REPO_ROOT"
+  #export PYTHONPATH="$REPO_ROOT:$PYTHONPATH"
 
   echo "Compute canada activated"
 fi

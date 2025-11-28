@@ -481,6 +481,62 @@ class Trainer:
                 yield p
 
 
+
+    def train_one_step_tt_only(self):
+        """TT-only training step: update target_unet and nothing else."""
+        accelerator = self.accelerator
+        gm = self.model.guidance_model
+        inner_gm = gm.module if hasattr(gm, "module") else gm
+
+        gm.train()
+
+        real_dict = next(self.real_image_dataloader)
+        real_image = real_dict["images"] * 2.0 - 1.0
+
+        if self.label_dim > 0:
+            real_label = self.eye_matrix[real_dict["class_labels"].squeeze(dim=1)]
+        else:
+            real_label = None
+
+        with accelerator.accumulate(gm):
+            # fresh TT forward; no generator or guidance calls
+            with torch.enable_grad():
+                tt_out = inner_gm.compute_loss_target_teacher(
+                    real_image=real_image,
+                    real_label=real_label,
+                    maybe_fake_image=None,
+                    train_on_real=getattr(self.args, "target_teacher_train_on_real", True),
+                    train_on_fake=getattr(self.args, "target_teacher_train_on_fake", False),
+                )
+                tt_loss = tt_out["loss_target_teacher"] * getattr(
+                    self.args, "target_teacher_loss_weight", 1.0
+                )
+
+            accelerator.backward(tt_loss)
+
+            # clip only target_unet params and step its optimizer
+            tt_params_for_clip = [
+                p for n, p in gm.named_parameters()
+                if (("target_unet." in n) or n.endswith("target_unet.weight") or n.endswith("target_unet.bias"))
+                and p.grad is not None
+            ]
+            if self.max_grad_norm and self.max_grad_norm > 0 and tt_params_for_clip:
+                torch.nn.utils.clip_grad_norm_(tt_params_for_clip, max_norm=self.max_grad_norm)
+
+            self.optimizer_target_teacher.step()
+            self.optimizer_target_teacher.zero_grad(set_to_none=True)
+            if self.scheduler_target_teacher is not None:
+                self.scheduler_target_teacher.step()
+
+        # very minimal logging (optional)
+        if accelerator.is_main_process and (self.global_step % self.wandb_iters == 0):
+            wandb.log({"tt/loss": float(tt_out["loss_target_teacher"].detach().item())},
+                      step=self.global_step)
+
+
+
+
+
     def train_one_step(self):
 
         def _strip_module_prefix_name(name: str) -> str:
@@ -644,7 +700,8 @@ class Trainer:
 
         for _ in range(self.global_step, self.train_iters):
 
-            self.train_one_step()
+            # self.train_one_step()
+            self.train_one_step_tt_only()
             # We just finished one micro-step; did we close an accumulation window?
             did_sync = ((self.step + 1) % max(1, accum) == 0)
 

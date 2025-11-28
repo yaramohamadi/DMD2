@@ -14,7 +14,7 @@ mkdir -p "$LOGDIR"
 
 MODE="${MODE:-cc}"
 export SERVER="${SERVER:-cc}"
-export WANDB_PROJECT="${WANDB_PROJECT:-SINGLE_GANHEAD_LOSS_SWEEP}"
+export WANDB_PROJECT="${WANDB_PROJECT:-RED_ABLATIONS}"
 
 submit_run () {
   local tag="$1"
@@ -100,7 +100,7 @@ run_row () {
 }
 
 # ---- Loss sweep: hinge, wgan, bce, lsgan ----
-LOSSES=("lsgan") 
+LOSSES=("bce") 
 
 for ds in metfaces; do # 
   # Use both teachers
