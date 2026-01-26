@@ -90,11 +90,12 @@ test_stream_conditional() {
     $NO_LPIPS \
     $USE_BF16 \
     --sampler $SAMPLER \
-    --ddim_steps 25 \
-    $EVAL_BEST_ONCE \
-    $Z_BANK_ONLY \
-    --zbank 0_myfiles_face/z_bank/zbank_256.pt
+    --ddim_steps 25 
 }
+
+#     $EVAL_BEST_ONCE \
+#    $Z_BANK_ONLY \
+#    --zbank 0_myfiles_face/z_bank/zbank_256.pt
 
 # -----------------------
 # Testing (one-shot marginal/NULL on best ckpt)
@@ -171,15 +172,13 @@ trap teardown EXIT INT TERM ERR
 
 # Start test in its own process group so children share the PGID
 
-# export -f test_stream_conditional
-# ( setsid bash -c 'test_stream_conditional' ) &
-# TEST_PID=$!
+export -f test_stream_conditional
+( setsid bash -c 'test_stream_conditional' ) &
+TEST_PID=$!
 # TEST_PGID="$(ps -o pgid= "$TEST_PID" | tr -d ' ')" || true
 
-test_stream_conditional
-
 # Run training in foreground; on exit (success or error), EXIT trap runs teardown()
-# train
+train
 # end of script — teardown() will run via the EXIT trap with train’s exit code
 
 

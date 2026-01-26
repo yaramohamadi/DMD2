@@ -6,16 +6,16 @@ LOGDIR="0_myfiles_face/slurm"
 mkdir -p "$LOGDIR"
 
 # ---------------- configs to sweep ----------------
-DATASETS=(cat)   # <— your dataset sweep # metfaces sunglasses babies
+DATASETS=(babies)   # <— your dataset sweep # metfaces sunglasses babies
 GEN_CLS_LOSS_WEIGHTS=(15e-3)
 CLS_LOSS_WEIGHTS=(5e-2)
 GEN_LRS=(5e-7)
 
-export WANDB_PROJECT="Babies_FINETUNE"
+export WANDB_PROJECT="Babies_FINETUNE_data10"
 export SAMPLER="karras"
 
-export EVAL_BEST_ONCE="--eval_best_once"
-export Z_BANK_ONLY="--zbank_only"
+# export EVAL_BEST_ONCE="--eval_best_once"
+# export Z_BANK_ONLY="--zbank_only"
 
 # Optional: per-dataset overrides (uncomment / edit if needed)
 # declare -A RES_BY_DS=( [babies]=256 [cat]=256 [metfaces]=256 [sunglasses]=256 )
@@ -58,6 +58,7 @@ for ds in "${DATASETS[@]}"; do
         export CLS_LOSS_WEIGHT="$clw"
         export GRAD_ACCUM_STEPS=4
         export BATCH_SIZE=1
+        export DATASET_SIZE=1
         if [[ "$dd" == "few" ]]; then
           export NUM_DENOISING_STEP=3
         else
@@ -65,10 +66,10 @@ for ds in "${DATASETS[@]}"; do
         fi
 
         # Tagging & GPUs
-        export EXTRA_TAG="_${tag}"
-        export CUDA_VISIBLE_DEVICES=0,1
-        export TRAIN_GPUS=0
-        export TEST_GPUS=1
+        export EXTRA_TAG="_${tag}_data${DATASET_SIZE}" 
+        export CUDA_VISIBLE_DEVICES=2,3
+        export TRAIN_GPUS=2
+        export TEST_GPUS=3
         export NPROC_PER_NODE=1
         export NNODES=1
 

@@ -607,45 +607,45 @@ def evaluate():
         args.total_eval_samples = min(int(args.zbank_count), int(zbank.size(0)))
 
 
-    # --- QUICK OVERRIDE: force a specific checkpoint and skip everything else ---
-    from pathlib import Path
-    FORCE_CKPT = "0_myfiles_face/checkpoint_path/babies_lr2e-6_bs1_dn3_DMD1_GClsw15e-3__gan_bce/checkpoint_best"
-    ckpt_path = Path(FORCE_CKPT)
-    if not ckpt_path.exists():
-        raise FileNotFoundError(f"Forced checkpoint not found: {ckpt_path}")
+    # # --- QUICK OVERRIDE: force a specific checkpoint and skip everything else ---
+    # from pathlib import Path
+    # FORCE_CKPT = "0_myfiles_face/checkpoint_path/babies_lr2e-6_bs1_dn3_DMD1_GClsw15e-3__gan_bce/checkpoint_best"
+    # ckpt_path = Path(FORCE_CKPT)
+    # if not ckpt_path.exists():
+    #     raise FileNotFoundError(f"Forced checkpoint not found: {ckpt_path}")
 
-    # Build model
-    generator = create_generator(
-        str(ckpt_path / "pytorch_model.bin"),
-        args, base_model=None
-    ).to("cuda" if torch.cuda.is_available() else "cpu")
-
-    # Optional: pick a display index from the name
-    try:
-        model_index = int(ckpt_path.name.split("_")[-1])
-    except Exception:
-        model_index = -1
-
-    # Accelerator init (minimal)
-    accelerator_project_config = ProjectConfiguration(logging_dir=str(ckpt_path.parent))
-    accelerator = Accelerator(
-        gradient_accumulation_steps=1,
-        mixed_precision="bf16" if args.use_bf16 else "no",
-        log_with="wandb",
-        project_config=accelerator_project_config
-    )
-
-    # If you’re using a z-bank, load it here (optional):
-    zbank = None
-    if getattr(args, "zbank", ""):
-        pkg = torch.load(args.zbank, map_location="cpu")
-        zbank = pkg["zT"].float()
-        args.total_eval_samples = min(int(getattr(args, "zbank_count", 100)), int(zbank.size(0)))
-
-    # Sample once and exit (honors --zbank_only saving, grid, etc.)
-    _ = sample(accelerator, generator, args, model_index, zbank=zbank)
-    return
-    # --- END QUICK OVERRIDE ---
+    # # Build model
+    # generator = create_generator(
+    #     str(ckpt_path / "pytorch_model.bin"),
+    #     args, base_model=None
+    # ).to("cuda" if torch.cuda.is_available() else "cpu")
+# 
+    # # Optional: pick a display index from the name
+    # try:
+    #     model_index = int(ckpt_path.name.split("_")[-1])
+    # except Exception:
+    #     model_index = -1
+# 
+    # # Accelerator init (minimal)
+    # accelerator_project_config = ProjectConfiguration(logging_dir=str(ckpt_path.parent))
+    # accelerator = Accelerator(
+    #     gradient_accumulation_steps=1,
+    #     mixed_precision="bf16" if args.use_bf16 else "no",
+    #     log_with="wandb",
+    #     project_config=accelerator_project_config
+    # )
+# 
+    # # If you’re using a z-bank, load it here (optional):
+    # zbank = None
+    # if getattr(args, "zbank", ""):
+    #     pkg = torch.load(args.zbank, map_location="cpu")
+    #     zbank = pkg["zT"].float()
+    #     args.total_eval_samples = min(int(getattr(args, "zbank_count", 100)), int(zbank.size(0)))
+# 
+    # # Sample once and exit (honors --zbank_only saving, grid, etc.)
+    # _ = sample(accelerator, generator, args, model_index, zbank=zbank)
+    # return
+    # # --- END QUICK OVERRIDE ---
 
 
 
