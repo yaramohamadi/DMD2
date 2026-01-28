@@ -59,6 +59,8 @@ train() {
       ${TT_MATCH_GUIDANCE-} \
       --dmd_source_weight "$DMD_SOURCE_WEIGHT" \
       --dmd_target_weight "$DMD_TARGET_WEIGHT" \
+      ${DISABLE_TARGET_TEACHER-} \
+      --gen_denoise_weight "${GEN_DENOISE_WEIGHT:-0.0}" \
       ${CHECKPOINT_PATH:+--checkpoint_path "$CHECKPOINT_PATH"}
 }
 
@@ -101,12 +103,12 @@ test_stream_conditional() {
 start_streaming_test() {
   export -f test_stream_conditional
   # Start in a new session so the PGID corresponds to the leader we can kill
-  bash -c 'test_stream_conditional'
+  # bash -c 'test_stream_conditional'
 
-  #( setsid bash -c 'test_stream_conditional' ) &
-  #TEST_PID=$!
-  #TEST_PGID="$(ps -o pgid= "$TEST_PID" | tr -d ' ')" || true
-  #echo "[orchestrator] started streaming test (pid=$TEST_PID, pgid=${TEST_PGID:-?})"
+  ( setsid bash -c 'test_stream_conditional' ) &
+  TEST_PID=$!
+  TEST_PGID="$(ps -o pgid= "$TEST_PID" | tr -d ' ')" || true
+  echo "[orchestrator] started streaming test (pid=$TEST_PID, pgid=${TEST_PGID:-?})"
 }
 
 stop_streaming_test() {
@@ -129,16 +131,16 @@ stop_streaming_test() {
   fi
 }
 
-# trap 'stop_streaming_test' EXIT INT TERM ERR
+trap 'stop_streaming_test' EXIT INT TERM ERR
 
 # 1) start background streaming eval
-# start_streaming_test
+start_streaming_test
 
 # 2) run training (foreground)
 train
 train_rc=$?
 
 # 3) stop background streaming eval now (don’t wait for script exit)
-# stop_streaming_test
+stop_streaming_test
 
 exit "$train_rc"

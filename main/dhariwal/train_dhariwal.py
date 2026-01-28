@@ -108,6 +108,18 @@ class Trainer:
 
         self.args = args
 
+
+        # ---- Global kill-switch for Target Teacher ----
+        if getattr(args, "disable_target_teacher", False):
+            # These are floats (0.0/1.0) in your parser
+            args.use_target_teacher = 0.0
+            args.train_target_teacher = 0.0
+            args.dmd_target_weight = 0.0
+
+        # Store extra denoising weight for convenience
+        self.gen_denoise_weight = float(getattr(args, "gen_denoise_weight", 0.0))
+
+
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True 
 
@@ -358,6 +370,9 @@ class Trainer:
             'dmtrain_pred_real_image_target',
             'dmtrain_grad_source',
             'dmtrain_grad_target',
+            'gen_denoise_latents',
+            'gen_denoise_noisy',
+            'gen_denoise_x0_pred',
         ]
 
         for k in tkeys:
@@ -367,7 +382,7 @@ class Trainer:
                 self._mb_tensors[k].append(v.detach())
 
         # Scalars we want to average over the window (extend as needed)
-        for k in ['loss_dm', 'loss_fake_mean', 'guidance_cls_loss', 'gen_cls_loss', 'loss_target_teacher']:
+        for k in ['loss_dm', 'loss_fake_mean', 'guidance_cls_loss', 'gen_cls_loss', 'loss_target_teacher', 'loss_gen_denoise']:
             if k in loss_dict:
                 v = loss_dict[k]
                 self._mb_scalars[k] += (float(v.detach().item()) if torch.is_tensor(v) else float(v))
@@ -533,10 +548,6 @@ class Trainer:
             wandb.log({"tt/loss": float(tt_out["loss_target_teacher"].detach().item())},
                       step=self.global_step)
 
-
-
-
-
     def train_one_step(self):
 
         def _strip_module_prefix_name(name: str) -> str:
@@ -598,6 +609,62 @@ class Trainer:
                 generator_loss = self.dmd_loss_weight * gen_loss_dict["loss_dm"]
                 if self.gan_classifier:
                     generator_loss = generator_loss + gen_loss_dict["gen_cls_loss"] * self.gen_cls_loss_weight
+
+                # -------------------------------------------------
+                # Optional: extra diffusion MSE on REAL target images
+                # using the GENERATOR (feedforward_model), not fake_unet
+                # -------------------------------------------------
+                if self.gen_denoise_weight > 0.0:
+                    # grab the *unwrapped* guidance model to access schedule params
+                    gm = self.model.guidance_model
+                    inner_gm = gm.module if hasattr(gm, "module") else gm
+
+                    # EDM training hyper-parameters from guidance model
+                    num_train_timesteps = inner_gm.num_train_timesteps
+                    karras_sigmas = inner_gm.karras_sigmas
+                    sigma_data = inner_gm.sigma_data
+
+                    latents = real_train_dict["real_image"]
+                    labels_real = real_train_dict["real_label"]
+                    batch_size = latents.shape[0]
+
+                    # --- standard EDM denoising objective ---
+                    latents = latents.detach()  # no grad wrt input images
+
+                    noise = torch.randn_like(latents)
+                    timesteps = torch.randint(
+                        0,
+                        num_train_timesteps,
+                        (batch_size, 1, 1, 1),
+                        device=latents.device,
+                        dtype=torch.long,
+                    )
+                    timestep_sigma = karras_sigmas[timesteps]
+                    noisy_latents = latents + timestep_sigma.reshape(-1, 1, 1, 1) * noise
+
+                    # IMPORTANT: use the GENERATOR here
+                    x0_pred = self.model.feedforward_model(
+                        noisy_latents,
+                        timestep_sigma,
+                        labels_real,
+                    )
+
+                    snrs = timestep_sigma ** -2
+                    weights = snrs + 1.0 / (sigma_data ** 2)
+
+                    loss_gen_denoise = torch.mean(
+                        weights * (x0_pred - latents) ** 2
+                    )
+
+                    # log + add to scalar
+                    gen_loss_dict["loss_gen_denoise"] = loss_gen_denoise
+                    gen_log_dict["gen_denoise_latents"] = latents.detach()
+                    gen_log_dict["gen_denoise_noisy"] = noisy_latents.detach()
+                    gen_log_dict["gen_denoise_x0_pred"] = x0_pred.detach()
+
+                    generator_loss = generator_loss + self.gen_denoise_weight * loss_gen_denoise
+
+                # backprop combined generator loss (DMD + optional denoising)
                 accelerator.backward(generator_loss)
 
             # ------------------- Guidance turn --------------------
@@ -700,8 +767,8 @@ class Trainer:
 
         for _ in range(self.global_step, self.train_iters):
 
-            # self.train_one_step()
-            self.train_one_step_tt_only()
+            self.train_one_step()
+            # self.train_one_step_tt_only()
             # We just finished one micro-step; did we close an accumulation window?
             did_sync = ((self.step + 1) % max(1, accum) == 0)
 
@@ -762,6 +829,10 @@ class Trainer:
                     # TT preview (already gathered)
                     tt_pred_x0 = agg_or_none('tt_pred_x0')
 
+                    gen_denoise_latents = agg_or_none('gen_denoise_latents')
+                    gen_denoise_noisy   = agg_or_none('gen_denoise_noisy')
+                    gen_denoise_x0_pred = agg_or_none('gen_denoise_x0_pred')
+
                     # Build a single payload
                     data_dict = {}
 
@@ -799,6 +870,19 @@ class Trainer:
                         data_dict["generated_image"]            = wandb.Image(generated_image_grid)
                         data_dict["generated_image_brightness"] = generated_image_brightness
                         data_dict["generated_image_std"]        = generated_image_std
+
+                    if gen_denoise_latents is not None:
+                        grid = prepare_images_for_saving(gen_denoise_latents, resolution=self.resolution)
+                        data_dict["gen_denoise/latents"] = wandb.Image(grid)
+
+                    if gen_denoise_noisy is not None:
+                        grid = prepare_images_for_saving(gen_denoise_noisy, resolution=self.resolution)
+                        data_dict["gen_denoise/noisy"] = wandb.Image(grid)
+
+                    if gen_denoise_x0_pred is not None:
+                        grid = prepare_images_for_saving(gen_denoise_x0_pred, resolution=self.resolution)
+                        data_dict["gen_denoise/x0_pred"] = wandb.Image(grid)
+                    
 
                     # pick a reference for legacy plots (prefer source → target → legacy)
                     def first_non_none(*xs):
@@ -867,7 +951,9 @@ class Trainer:
                     loss_dm_mean        = float(scalar_means.get('loss_dm',        loss_dict.get('loss_dm', 0.0)))
                     loss_fake_mean_mean = float(scalar_means.get('loss_fake_mean', loss_dict.get('loss_fake_mean', 0.0)))
                     tt_loss_mean        = float(scalar_means.get('loss_target_teacher', loss_dict.get('loss_target_teacher', 0.0)))
+                    loss_gen_denoise_mean = float(scalar_means.get('loss_gen_denoise', loss_dict.get('loss_gen_denoise', 0.0)))
 
+                    data_dict["loss_gen_denoise"] = loss_gen_denoise_mean
                     data_dict["loss_dm"]        = loss_dm_mean
                     data_dict["loss_fake_mean"] = loss_fake_mean_mean
                     data_dict["tt/loss"]        = tt_loss_mean
@@ -1024,7 +1110,7 @@ def parse_args():
     # ---------------- Adding target teacher --------------------
     parser.add_argument("--use_source_teacher", type=float, default=1.0,
         help="Use a source teacher model for DMD loss")
-    parser.add_argument("--use_target_teacher", type=float, default=0.0,)
+    parser.add_argument("--use_target_teacher", type=float, default=1.0,)
     parser.add_argument("--train_target_teacher", type=float, default=1.0,
         help="Train the target teacher model along with the main model")
     parser.add_argument(
@@ -1040,6 +1126,23 @@ def parse_args():
     parser.add_argument("--target_teacher_ckpt_path", type=str, default=None,
         help="Path to a .pt file to initialize the Target Teacher (overrides --model_id for TT only).")
     # -----------------------------------------------------------
+
+    # Hard kill-switch for Target Teacher
+    parser.add_argument(
+        "--disable_target_teacher",
+        action="store_true",
+        help="If set, completely disable Target Teacher: no creation, no training, no DMD target term."
+    )
+
+    # Extra diffusion denoising loss on real data for the student/generator
+    parser.add_argument(
+        "--gen_denoise_weight",
+        type=float,
+        default=0.0,
+        help="Weight for extra diffusion MSE loss on real target images "
+             "for the student/generator during the generator turn (0 disables)."
+    )
+
 
     args = parser.parse_args()
 

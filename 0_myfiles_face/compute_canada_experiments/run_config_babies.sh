@@ -4,7 +4,7 @@
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:h100:1
 #SBATCH --cpus-per-task=4
-#SBATCH --mem=20G
+#SBATCH --mem=40G
 #SBATCH --time=06:30:00
 #SBATCH --mail-user=yara.mohammadi-bahram.1@ens.etsmtl.ca
 #SBATCH --mail-type=BEGIN,END,FAIL
@@ -61,7 +61,7 @@ export MASTER_PORT=$(shuf -i 20000-65000 -n 1)
 
 export GRAD_ACCUM_STEPS="${GRAD_ACCUM_STEPS:-4}"
 export BATCH_SIZE="${BATCH_SIZE:-1}"
-export EVAL_BATCH_SIZE=10
+export EVAL_BATCH_SIZE=4
 export NUM_DENOISING_STEP="${NUM_DENOISING_STEP:-3}"
 export TRAIN_ITERS="${TRAIN_ITERS:-40000}"
 export DATASET_SIZE="${DATASET_SIZE:-10}"  # 10 5 1
@@ -119,9 +119,9 @@ export GEN_CLS_LOSS_WEIGHT="${GEN_CLS_LOSS_WEIGHT:-15e-3}" #-3e-3
 export DMD_LOSS_WEIGHT="${DMD_LOSS_WEIGHT:-1}"
 export DIFFUSION_GAN_MAX_TIMESTEP=1000
 
-export LOG_ITERS=500
-export WANDB_ITERS=500
-export MAX_CHECKPOINT=500
+export LOG_ITERS=100
+export WANDB_ITERS=100
+export MAX_CHECKPOINT=100
 
 export FID_NPZ_ROOT="$PROJECT_PATH/datasets/fid_npz"
 export FEWSHOT_DATASET="$PROJECT_PATH/datasets/targets/${DATASET_SIZE}_${DATASET_NAME}/0"
@@ -152,17 +152,20 @@ export CHECKPOINT_PATH="${CHECKPOINT_PATH-}"
 export TRAIN_FAKE_ON_REAL="${TRAIN_FAKE_ON_REAL-}" #  --train_fake_on_real
 
 export USE_SOURCE_TEACHER="${USE_SOURCE_TEACHER:-1.0}"
-export USE_TARGET_TEACHER="${USE_TARGET_TEACHER:-0.0}"
+export USE_TARGET_TEACHER="${USE_TARGET_TEACHER:-1.0}"
 export TRAIN_TARGET_TEACHER="${TRAIN_TARGET_TEACHER:-1.0}"
-export TARGET_TEACHER_CHECKPOINT_PATH="${TARGET_TEACHER_CHECKPOINT_PATH-}" # --target_teacher_ckpt_path "path/to/tt_checkpoint.pt"
+export TARGET_TEACHER_CHECKPOINT_PATH="${TARGET_TEACHER_CHECKPOINT_PATH-}" # --target_teacher_ckpt_path "path/to/tt_checkpoint.pt
+
+export DISABLE_TARGET_TEACHER="${DISABLE_TARGET_TEACHER:-}" # --disable_target_teacher
+export GEN_DENOISE_WEIGHT="${GEN_DENOISE_WEIGHT:-0.0}"
 
 export MAKE_DDIM_GRID=${MAKE_DDIM_GRID:-} # --make_ddim_grid
 export DDIM_GRID_ONLY=${DDIM_GRID_ONLY-} # --ddim_grid_only
 export EVAL_BEST_ONCE=${EVAL_BEST_ONCE-} # --eval_best_once
 
 export GAN_CLASSIFIER="${GAN_CLASSIFIER-"--gan_classifier"}" # --gan_classifier
+export EXPERIMENT_NAME="${DATASET_NAME}_lr${GEN_LR}_bs${BATCH_SIZE}_dn${NUM_DENOISING_STEP}_${TRAIN_FAKE_ON_REAL}_DMD${DMD_LOSS_WEIGHT}_GClsw${GEN_CLS_LOSS_WEIGHT}_Gden${GEN_DENOISE_WEIGHT}_${EXTRA_TAG}"
 
-export EXPERIMENT_NAME="${DATASET_NAME}_lr${GEN_LR}_bs${BATCH_SIZE}_dn${NUM_DENOISING_STEP}_${TRAIN_FAKE_ON_REAL}_DMD${DMD_LOSS_WEIGHT}_GClsw${GEN_CLS_LOSS_WEIGHT}_${EXTRA_TAG}"
 export OUTPUT_PATH="$SCRATCH/$EXPERIMENT_NAME"
 # "$PROJECT_PATH/checkpoint_path/$EXPERIMENT_NAME"
 #"$PROJECT_PATH/checkpoint_path/$EXPERIMENT_NAME"
