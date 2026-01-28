@@ -438,6 +438,13 @@ def sample(accelerator, current_model, args, model_index, zbank=None):
 
             print(f"[zbank_only] Saved {N} images and a {g}x{g} grid to {outdir}.")
 
+        # --- always build a preview grid for wandb ---
+        n = all_images_tensor.size(0)
+        g = int(np.floor(np.sqrt(min(100, n))))
+        g = max(1, g)
+        grid = all_images_tensor[: g*g].numpy().reshape(g, g, args.resolution, args.resolution, 3)
+        grid = np.swapaxes(grid, 1, 2).reshape(g*args.resolution, g*args.resolution, 3)
+
         wandb.log({
             "generated_image_grid": wandb.Image(grid),
             "image_mean": float(all_images_tensor.float().mean().item()),
