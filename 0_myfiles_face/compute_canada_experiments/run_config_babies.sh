@@ -125,7 +125,7 @@ export MAX_CHECKPOINT=100
 
 export FID_NPZ_ROOT="$PROJECT_PATH/datasets/fid_npz"
 export FEWSHOT_DATASET="$PROJECT_PATH/datasets/targets/${DATASET_SIZE}_${DATASET_NAME}/0"
-export TOTAL_EVAL_SAMPLES=100 # 5000
+export TOTAL_EVAL_SAMPLES=5000
 export CONDITIONING_SIGMA=80.0
 export LPIPS_CLUSTER_SIZE=100
 export NO_LPIPS=${NO_LPIPS-"--no_lpips"}  # --no_lpips

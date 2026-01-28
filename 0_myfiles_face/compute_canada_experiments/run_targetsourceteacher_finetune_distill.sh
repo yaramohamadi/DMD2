@@ -7,7 +7,7 @@ mkdir -p "$LOGDIR"
 
 MODE="${MODE:-local}"
 export SERVER="${SERVER:-local}"
-export WANDB_PROJECT="FINETUNE_DISTILL"
+export WANDB_PROJECT="FINETUNE_DISTILL_1shot"
 
 submit_run () {
   local tag="$1"
@@ -56,6 +56,7 @@ export DATASET_SIZE="10"
 export NUM_DENOISING_STEP="3"
 export GRAD_ACCUM_STEPS=1
 export BATCH_SIZE=1
+export DATASET_SIZE=1
 export TRAIN_GPUS=0
 export TEST_GPUS=1
 export CUDA_VISIBLE_DEVICES=0,1
@@ -76,7 +77,7 @@ fmtw () { echo "$1" | sed 's/\./p/g'; }
 
 # ---- Per-dataset checkpoints ----
 declare -A CKPT
-CKPT[babies]="0_myfiles_face/checkpoints/babies_finetune.pt"
+CKPT[babies]="0_myfiles_face/checkpoints/babies1shot_finetune.pt"
 CKPT[cat]="0_myfiles_face/checkpoints/cat_finetune.pt"
 CKPT[sunglasses]="0_myfiles_face/checkpoints/sunglasses_finetune.pt"
 CKPT[metfaces]="0_myfiles_face/checkpoints/metfaces_finetune.pt"
