@@ -14,7 +14,7 @@ mkdir -p "$LOGDIR"
 
 MODE="${MODE:-cc}"
 export SERVER="${SERVER:-cc}"
-export WANDB_PROJECT="${WANDB_PROJECT:-RED_ABLATIONS}"
+export WANDB_PROJECT="${WANDB_PROJECT:-NOTARGETTEACHER_STUDENTMSE_SWEEP}"
 
 submit_run () {
   local tag="$1"
@@ -46,15 +46,16 @@ USE_TARGET_TEACHER="$USE_TARGET_TEACHER",\
 TRAIN_TARGET_TEACHER="$TRAIN_TARGET_TEACHER",\
 GAN_CLASSIFIER="$GAN_CLASSIFIER",\
 GAN_MULTIHEAD="$GAN_MULTIHEAD",\
-GAN_ADV_LOSS="$GAN_ADV_LOSS",\
-TT_MATCH_GUIDANCE="$TT_MATCH_GUIDANCE" \
+TT_MATCH_GUIDANCE="$TT_MATCH_GUIDANCE",\
+GEN_DENOISE_WEIGHT="$GEN_DENOISE_WEIGHT",\
+DISABLE_TARGET_TEACHER="$DISABLE_TARGET_TEACHER" \
       "$CHILD"
   else
     bash "$CHILD"
   fi
 }
 
-# --------- Base hparams (match your previous sweeps unless you override) ---------
+# --------- Base hparams for this sweep ---------
 export GEN_LR="2e-6"
 export GEN_CLS_LOSS_WEIGHT="1e-2"
 export CLS_LOSS_WEIGHT="3e-3"
@@ -67,60 +68,27 @@ export TRAIN_GPUS=0
 export TEST_GPUS=0
 export NPROC_PER_NODE=1
 export NNODES=1
-export TRAIN_TARGET_TEACHER=1
-export TT_MATCH_GUIDANCE=""
 
+# new method: no target teacher at all
+export USE_SOURCE_TEACHER="1.0"
+export USE_TARGET_TEACHER="0.0"
+export TRAIN_TARGET_TEACHER="0.0"
+export DMD_SOURCE_WEIGHT="1.0"
+export DMD_TARGET_WEIGHT="0.0"
+export DISABLE_TARGET_TEACHER="--disable_target_teacher"
+
+# helpers
 fmtw () { echo "$1" | sed 's/\./p/g'; }
 
-run_row () {
-  # args: ds use_src use_tgt sw tw gan_mode rowname
-  local ds="$1" use_src="$2" use_tgt="$3" sw="$4" tw="$5" gan="$6" row="$7"
+# SIMPLE SWEEP over generator denoising weight
+export DATASET_NAME="metfaces"
 
-  # map GAN mode -> flags
-  case "$gan" in
-    none)   export GAN_CLASSIFIER="";                    export GAN_MULTIHEAD="";;
-    single) export GAN_CLASSIFIER="--gan_classifier";    export GAN_MULTIHEAD="";;
-    multi)  export GAN_CLASSIFIER="--gan_classifier";    export GAN_MULTIHEAD="--gan_multihead";;
-    *) echo "Unknown GAN mode: $gan"; exit 1;;
-  esac
-
-  export DATASET_NAME="$ds"
-  export USE_SOURCE_TEACHER="$use_src"
-  export USE_TARGET_TEACHER="$use_tgt"
-  export DMD_SOURCE_WEIGHT="$sw"
-  export DMD_TARGET_WEIGHT="$tw"
-
-  local s_tag t_tag
-  s_tag="$(fmtw "$sw")"; t_tag="$(fmtw "$tw")"
-  local tag="TAB_${ds}_${row}_src${use_src}_tgt${use_tgt}_SW${s_tag}_TW${t_tag}_gan${gan}"
-  echo "[$MODE] $ds | row=$row | src=$use_src tgt=$use_tgt SW=$sw TW=$tw | GAN=$gan | tag=$tag"
+# choose whatever weights you want to try
+for w in 0.0 0.05 0.1 0.2 0.5 1.0; do 
+  export GEN_DENOISE_WEIGHT="$w"
+  tag="Gden_${DATASET_NAME}_w$(fmtw "$w")"
+  echo "[SWEEP] dataset=$DATASET_NAME | GEN_DENOISE_WEIGHT=$w | tag=$tag"
 
   export EXTRA_TAG="_${tag}"
   submit_run "$tag"
-}
-
-# ---- Loss sweep: hinge, wgan, bce, lsgan ----
-LOSSES=("bce") 
-
-for ds in metfaces; do # 
-  # Use both teachers
-  use_src=1
-  use_tgt=1
-
-  # Per-dataset weights when both teachers are ON
-  if [[ "$ds" == "babies" ]]; then
-    SW_BOTH=0.75; TW_BOTH=0.25
-  else
-    SW_BOTH=0.25; TW_BOTH=0.75
-  fi
-
-  for loss in "${LOSSES[@]}"; do
-    export GAN_ADV_LOSS="$loss"
-
-    # Single-head
-    run_row "$ds" "$use_src" "$use_tgt" "$SW_BOTH" "$TW_BOTH" "single" "bothTeachers_single_${loss}"
-
-    # Multi-head
-    # run_row "$ds" "$use_src" "$use_tgt" "$SW_BOTH" "$TW_BOTH" "multi"  "bothTeachers_multi_${loss}"
-  done
 done

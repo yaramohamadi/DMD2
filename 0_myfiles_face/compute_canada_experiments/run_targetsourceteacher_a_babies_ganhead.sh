@@ -61,21 +61,21 @@ if [[ ${#SRC_WEIGHTS[@]} -ne ${#TGT_WEIGHTS[@]} ]]; then
 fi
 
 export TT_MATCH_GUIDANCE=""  # "--tt_match_guidance" to enable
-export WANDB_PROJECT="SWEEP_GAN_HEADS"
+export WANDB_PROJECT="SWEEP_GAN_HEADS_babies"
 
 # Enable both teachers; TT is trainable
 export USE_SOURCE_TEACHER=1
 export USE_TARGET_TEACHER=1
 export TRAIN_TARGET_TEACHER=1
 
-DATASETS=("babies" "metfaces")
+DATASETS=("babies")  # "metfaces"
 
 # NEW: the two sweep axes you already have
 DATASET_SIZES=(10)
 DENOISING_STEPS=(3)
 
 # NEW: GAN adversarial loss sweep
-LOSSES=("hinge" "wgan" "BCE" "LSGAN")
+LOSSES=("wgan" "hinge" "bce" "lsgan")
 
 GAN_MULTIHEAD=""  # "--gan_multihead" to enable
 

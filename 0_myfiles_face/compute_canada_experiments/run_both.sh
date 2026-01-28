@@ -59,6 +59,8 @@ train() {
       ${TT_MATCH_GUIDANCE-} \
       --dmd_source_weight "$DMD_SOURCE_WEIGHT" \
       --dmd_target_weight "$DMD_TARGET_WEIGHT" \
+      ${DISABLE_TARGET_TEACHER-} \
+      --gen_denoise_weight "${GEN_DENOISE_WEIGHT:-0.0}" \
       ${CHECKPOINT_PATH:+--checkpoint_path "$CHECKPOINT_PATH"}
 }
 
@@ -101,6 +103,8 @@ test_stream_conditional() {
 start_streaming_test() {
   export -f test_stream_conditional
   # Start in a new session so the PGID corresponds to the leader we can kill
+  # bash -c 'test_stream_conditional'
+
   ( setsid bash -c 'test_stream_conditional' ) &
   TEST_PID=$!
   TEST_PGID="$(ps -o pgid= "$TEST_PID" | tr -d ' ')" || true
@@ -127,7 +131,7 @@ stop_streaming_test() {
   fi
 }
 
-# trap 'stop_streaming_test' EXIT INT TERM ERR
+trap 'stop_streaming_test' EXIT INT TERM ERR
 
 # 1) start background streaming eval
 start_streaming_test
